@@ -13,12 +13,17 @@ Design notes
   adding a new class never requires touching battle().
 """
 
+import os
 import random
 import sys
 
-# Force UTF-8 output on Windows terminals that default to cp1252
-if str(sys.stdout.encoding).lower() != "utf-8":
-    sys.stdout.reconfigure(encoding="utf-8")
+# Force UTF-8 on Windows before any output is attempted.
+# If PYTHONUTF8 is not already set, re-launch this script with it enabled
+# so the entire process starts in UTF-8 mode from the very beginning.
+if os.name == "nt" and os.environ.get("PYTHONUTF8") != "1":
+    os.environ["PYTHONUTF8"] = "1"
+    SCRIPT_PATH = f'"{sys.argv[0]}"'
+    sys.exit(os.spawnv(os.P_WAIT, sys.executable, [sys.executable, SCRIPT_PATH]))
 
 
 # ─────────────────────────────────────────────
