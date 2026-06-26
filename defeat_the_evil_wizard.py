@@ -494,7 +494,7 @@ class HolyPriest(Character):
     """
 
     def __init__(self, name):
-        super().__init__(name, health=200, attack_power=20, heal_power=35)
+        super().__init__(name, health=200, attack_power=32, heal_power=35)
         self.abilities = [
             {
                 "name": "Smite",
@@ -711,18 +711,21 @@ class EvilWizard(Character):
     """
 
     def __init__(self, name):
-        super().__init__(name, health=200, attack_power=18, heal_power=5)
+        super().__init__(name, health=150, attack_power=15, heal_power=5)
         self._enraged      = False
         self._void_used    = False
 
     def regenerate(self):
         """Regenerate 5 HP (does not exceed max)."""
-        self.health = min(self.health + 5, self.max_health)
-        print(f"  💀 {self.name} regenerates 5 HP. HP: {self.health}/{self.max_health}")
+        self.health = min(self.health + 3, self.max_health)
+        print(f"  💀 {self.name} regenerates 3 HP. HP: {self.health}/{self.max_health}")
 
     def wizard_action(self, player):
         """
         Choose wizard's attack based on HP thresholds.
+        If the player is a HolyPriest, the wizard applies Dark Suppression —
+        halving her healing and dealing bonus dark damage — since light and
+        dark are natural opposites.
         Also checks for and applies moonfire / poison status on wizard.
         """
         # Tick statuses on wizard before acting
@@ -731,8 +734,23 @@ class EvilWizard(Character):
         # Enrage at 50 %
         if not self._enraged and self.health <= self.max_health * 0.5:
             self._enraged = True
-            self.attack_power += 10
+            self.attack_power += 5
             print(f"\n  ⚡ {self.name} becomes ENRAGED! Attack power → {self.attack_power}!")
+
+        # Dark Suppression — activates only against a Holy Priest
+        if isinstance(player, HolyPriest):
+            if not player.status_effects.get("dark_suppressed"):
+                player.status_effects["dark_suppressed"] = True
+                player.heal_power = player.heal_power // 2
+                print(f"\n  🌑 {self.name} senses the Light within {player.name} "
+                      "and unleashes DARK SUPPRESSION! Her healing is halved!")
+            # Also deal 10 bonus dark damage every turn against her
+            bonus = 10
+            print(f"  🌑 Dark energy sears {player.name} for {bonus} bonus damage!")
+            player.health -= bonus
+            if player.health <= 0:
+                print(f"{player.name} has been defeated!")
+                return
 
         # Void Surge once at 25 %
         if not self._void_used and self.health <= self.max_health * 0.25:
