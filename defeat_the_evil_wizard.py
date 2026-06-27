@@ -140,8 +140,7 @@ def print_title():
   ╚═════╝ ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚══════╝
     """
     print(title)
-    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...\
-        ⚔️", delay=0.04)  # noqa: E501
+    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...  ⚔️", delay=0.04)  # noqa: E501
     pause(0.8)
 
 
@@ -259,6 +258,8 @@ class Character:
     def use_ability(self, index, opponent):
         """
         Dispatch ability by index in self.abilities list.
+        Abilities with cooldown > 0 cannot be used until the counter reaches 0.
+        After a successful use, the cooldown is reset to its max value.
 
         Parameters
         ----------
@@ -269,9 +270,32 @@ class Character:
             print("  ❌ Invalid ability choice.")
             return
         ability = self.abilities[index]
+
+        # Check cooldown
+        remaining = ability.get("cooldown", 0)
+        if remaining > 0:
+            slow_print(
+                f"  ⏳ {ability['name']} is on cooldown for "
+                f"{remaining} more turn(s)!"
+            )
+            return
+
         slow_print(f"\n  ✨ {self.name} uses {ability['name']}!", delay=0.05)
         pause(0.3)
         ability["method"](opponent)
+
+        # Reset cooldown after use
+        if "max_cooldown" in ability:
+            ability["cooldown"] = ability["max_cooldown"]
+
+    def tick_cooldowns(self):
+        """
+        Decrement all ability cooldowns by 1 at the end of each turn.
+        Called by the battle loop automatically.
+        """
+        for ability in self.abilities:
+            if ability.get("cooldown", 0) > 0:
+                ability["cooldown"] -= 1
 
     def display_stats(self):
         """Print current HP, max HP, and attack power."""
@@ -321,24 +345,32 @@ class Warrior(Character):
         super().__init__(name, health=160, attack_power=28, heal_power=20)
         self.abilities = [
             {
-                "name":   "⚔️  Shield Bash",
-                "desc":   "Deal 1.5× damage and block the opponent's next attack.",
-                "method": self._shield_bash,
+                "name":         "⚔️  Shield Bash",
+                "desc":         "Deal 1.5× damage and block the opponent's next attack.",
+                "method":       self._shield_bash,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🌀 Whirlwind",
-                "desc":   "Spin attack dealing 2× damage.",
-                "method": self._whirlwind,
+                "name":         "🌀 Whirlwind",
+                "desc":         "Spin attack dealing 2× damage.",
+                "method":       self._whirlwind,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "📣 Battle Cry",
-                "desc":   "Raise your attack power by 10 permanently.",
-                "method": self._battle_cry,
+                "name":         "📣 Battle Cry",
+                "desc":         "Raise your attack power by 10 permanently.",
+                "method":       self._battle_cry,
+                "max_cooldown": 3,
+                "cooldown":     0,
             },
             {
-                "name":   "🩸 Last Stand",
-                "desc":   "Heal 40 HP and immediately strike back (only when below 30 % HP).",
-                "method": self._last_stand,
+                "name":         "🩸 Last Stand",
+                "desc":         "Heal 40 HP and strike back (only when below 30 % HP).",
+                "method":       self._last_stand,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
         ]
 
@@ -388,24 +420,32 @@ class Mage(Character):
         self._surge_bonus  = 15
         self.abilities = [
             {
-                "name":   "🔥 Fireball",
-                "desc":   "Hurl a fireball for 2× damage.",
-                "method": self._fireball,
+                "name":         "🔥 Fireball",
+                "desc":         "Hurl a fireball for 2× damage.",
+                "method":       self._fireball,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "❄️  Frost Nova",
-                "desc":   "Freeze the opponent; they lose their next attack.",
-                "method": self._frost_nova,
+                "name":         "❄️  Frost Nova",
+                "desc":         "Freeze the opponent; they lose their next attack.",
+                "method":       self._frost_nova,
+                "max_cooldown": 3,
+                "cooldown":     0,
             },
             {
-                "name":   "⚡ Arcane Surge",
-                "desc":   "Boost attack power by 15 until next turn.",
-                "method": self._arcane_surge,
+                "name":         "⚡ Arcane Surge",
+                "desc":         "Boost attack power by 15 — then pick a follow-up action.",
+                "method":       self._arcane_surge,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "💨 Blink",
-                "desc":   "Teleport — your next incoming attack misses.",
-                "method": self._blink,
+                "name":         "💨 Blink",
+                "desc":         "Teleport — your next incoming attack misses.",
+                "method":       self._blink,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
         ]
 
@@ -457,24 +497,32 @@ class Archer(Character):
         self._rain_used = False
         self.abilities = [
             {
-                "name":   "🏹 Quick Shot",
-                "desc":   "Two fast arrows — each deals 0.75× damage.",
-                "method": self._quick_shot,
+                "name":         "🏹 Quick Shot",
+                "desc":         "Two fast arrows — each deals 0.75× damage.",
+                "method":       self._quick_shot,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🎯 Sniper Shot",
-                "desc":   "Bypasses all defenses for 1.8× damage.",
-                "method": self._sniper_shot,
+                "name":         "🎯 Sniper Shot",
+                "desc":         "Bypasses all defenses for 1.8× damage.",
+                "method":       self._sniper_shot,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "💨 Evade",
-                "desc":   "Guarantee a dodge on the next attack aimed at you.",
-                "method": self._evade,
+                "name":         "💨 Evade",
+                "desc":         "Guarantee a dodge on the next attack aimed at you.",
+                "method":       self._evade,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🌧️  Rain of Arrows",
-                "desc":   "Devastating volley (2.5×). One-time use.",
-                "method": self._rain_of_arrows,
+                "name":         "🌧️  Rain of Arrows",
+                "desc":         "Devastating volley (2.5×). One-time use.",
+                "method":       self._rain_of_arrows,
+                "max_cooldown": 0,
+                "cooldown":     0,
             },
         ]
 
@@ -524,24 +572,32 @@ class Paladin(Character):
         super().__init__(name, health=150, attack_power=26, heal_power=28)
         self.abilities = [
             {
-                "name":   "✝️  Holy Strike",
-                "desc":   "A blessed strike for 1.6× damage.",
-                "method": self._holy_strike,
+                "name":         "✝️  Holy Strike",
+                "desc":         "A blessed strike for 1.6× damage.",
+                "method":       self._holy_strike,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🛡️  Divine Shield",
-                "desc":   "Block the next attack aimed at you.",
-                "method": self._divine_shield,
+                "name":         "🛡️  Divine Shield",
+                "desc":         "Block the next attack aimed at you.",
+                "method":       self._divine_shield,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🔥 Consecration",
-                "desc":   "Deal moderate damage and heal yourself 15 HP.",
-                "method": self._consecration,
+                "name":         "🔥 Consecration",
+                "desc":         "Deal moderate damage and heal yourself 15 HP.",
+                "method":       self._consecration,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "✨ Aura of Valor",
-                "desc":   "Permanently raise max HP by 30 and restore that HP.",
-                "method": self._aura_of_valor,
+                "name":         "✨ Aura of Valor",
+                "desc":         "Permanently raise max HP by 30 and restore that HP.",
+                "method":       self._aura_of_valor,
+                "max_cooldown": 0,
+                "cooldown":     0,
             },
         ]
 
@@ -588,24 +644,32 @@ class DeathKnight(Character):
         self._army_used = False
         self.abilities = [
             {
-                "name":   "💀 Death Coil",
-                "desc":   "Dark bolt that steals 20 HP from the opponent.",
-                "method": self._death_coil,
+                "name":         "💀 Death Coil",
+                "desc":         "Dark bolt that steals 20 HP from the opponent.",
+                "method":       self._death_coil,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🩸 Blood Boil",
-                "desc":   "Sacrifice 15 HP to unleash 2.5× damage.",
-                "method": self._blood_boil,
+                "name":         "🩸 Blood Boil",
+                "desc":         "Sacrifice 15 HP to unleash 2.5× damage.",
+                "method":       self._blood_boil,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🌑 Dark Pact",
-                "desc":   "Drain 25 HP from opponent directly into your own pool.",
-                "method": self._dark_pact,
+                "name":         "🌑 Dark Pact",
+                "desc":         "Drain 25 HP from opponent directly into your own pool.",
+                "method":       self._dark_pact,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "👻 Army of the Dead",
-                "desc":   "Unleash spectral warriors for massive damage (one-time).",
-                "method": self._army_of_the_dead,
+                "name":         "👻 Army of the Dead",
+                "desc":         "Unleash spectral warriors for massive damage (one-time).",
+                "method":       self._army_of_the_dead,
+                "max_cooldown": 0,
+                "cooldown":     0,
             },
         ]
 
@@ -672,24 +736,32 @@ class HolyPriest(Character):
         super().__init__(name, health=200, attack_power=32, heal_power=35)
         self.abilities = [
             {
-                "name":   "✨ Smite",
-                "desc":   "Channel the Light for 1.4× holy damage.",
-                "method": self._smite,
+                "name":         "✨ Smite",
+                "desc":         "Channel the Light for 1.4× holy damage.",
+                "method":       self._smite,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🙏 Prayer of Healing",
-                "desc":   "Restore 50 HP through divine grace.",
-                "method": self._prayer_of_healing,
+                "name":         "🙏 Prayer of Healing",
+                "desc":         "Restore 50 HP through divine grace.",
+                "method":       self._prayer_of_healing,
+                "max_cooldown": 3,
+                "cooldown":     0,
             },
             {
-                "name":   "🎵 Divine Hymn",
-                "desc":   "Holy chant: heal 35 HP and weaken opponent's attack by 5.",
-                "method": self._divine_hymn,
+                "name":         "🎵 Divine Hymn",
+                "desc":         "Holy chant: heal 35 HP and weaken opponent's attack by 5.",
+                "method":       self._divine_hymn,
+                "max_cooldown": 3,
+                "cooldown":     0,
             },
             {
-                "name":   "💫 Holy Nova",
-                "desc":   "Burst of light: deal 1.2× damage and heal yourself 20 HP.",
-                "method": self._holy_nova,
+                "name":         "💫 Holy Nova",
+                "desc":         "Burst of light: deal 1.2× damage and heal yourself 20 HP.",
+                "method":       self._holy_nova,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
         ]
 
@@ -740,24 +812,32 @@ class Rogue(Character):
         super().__init__(name, health=115, attack_power=36, heal_power=15)
         self.abilities = [
             {
-                "name":   "🗡️  Backstab",
-                "desc":   "60 % chance of 3× damage. Miss on 40 %.",
-                "method": self._backstab,
+                "name":         "🗡️  Backstab",
+                "desc":         "60 % chance of 3× damage. Miss on 40 %.",
+                "method":       self._backstab,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "💨 Smoke Bomb",
-                "desc":   "Evade next attack and reduce opponent precision.",
-                "method": self._smoke_bomb,
+                "name":         "💨 Smoke Bomb",
+                "desc":         "Evade next attack and reduce opponent precision.",
+                "method":       self._smoke_bomb,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "☠️  Poison Blade",
-                "desc":   "Coat your blade — opponent takes 10 damage next turn.",
-                "method": self._poison_blade,
+                "name":         "☠️  Poison Blade",
+                "desc":         "Coat your blade — opponent takes 10 damage next turn.",
+                "method":       self._poison_blade,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🌑 Shadow Step",
-                "desc":   "Bypass shields; deal guaranteed 2× damage.",
-                "method": self._shadow_step,
+                "name":         "🌑 Shadow Step",
+                "desc":         "Bypass shields; deal guaranteed 2× damage.",
+                "method":       self._shadow_step,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
         ]
 
@@ -810,24 +890,32 @@ class Druid(Character):
         self._moonfire_applied   = False
         self.abilities = [
             {
-                "name":   "⚡ Wrath",
-                "desc":   "Call down nature's fury for 1.5× damage.",
-                "method": self._wrath,
+                "name":         "⚡ Wrath",
+                "desc":         "Call down nature's fury for 1.5× damage.",
+                "method":       self._wrath,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🐻 Bear Form",
-                "desc":   "Hulk out: +30 temp HP and shield the next attack.",
-                "method": self._bear_form,
+                "name":         "🐻 Bear Form",
+                "desc":         "Hulk out: +30 temp HP and shield the next attack.",
+                "method":       self._bear_form,
+                "max_cooldown": 3,
+                "cooldown":     0,
             },
             {
-                "name":   "🌿 Regrowth",
-                "desc":   "Heal 25 now; automatically heal 15 more next turn.",
-                "method": self._regrowth,
+                "name":         "🌿 Regrowth",
+                "desc":         "Heal 25 now; automatically heal 15 more next turn.",
+                "method":       self._regrowth,
+                "max_cooldown": 2,
+                "cooldown":     0,
             },
             {
-                "name":   "🌙 Moonfire",
-                "desc":   "Mark opponent — they take 8 extra damage each time they attack.",
-                "method": self._moonfire,
+                "name":         "🌙 Moonfire",
+                "desc":         "Mark opponent — they take 8 extra damage each time they attack.",
+                "method":       self._moonfire,
+                "max_cooldown": 0,
+                "cooldown":     0,
             },
         ]
 
@@ -1004,13 +1092,13 @@ def create_character():
     # Each entry: (emoji, name, hp, atk, role)
     # Printed in fixed columns so everything lines up regardless of emoji width.
     descriptions = [
-        ("⚔️",  "Warrior",      160, 28, "Tank & sustain"),
+        ("🗡",  "Warrior",      160, 28, "Tank & sustain"),
         ("🔮",  "Mage",         100, 40, "Glass cannon"),
         ("🏹",  "Archer",       120, 32, "Speed & range"),
-        ("🛡️",  "Paladin",      150, 26, "Holy defender"),
+        ("🛡",  "Paladin",      150, 26, "Holy defender"),
         ("💀",  "Death Knight", 170, 34, "Dark drainer"),
         ("✨",  "Holy Priest",  200, 32, "Most resilient"),
-        ("🗡️",  "Rogue",        115, 36, "Assassin burst"),
+        ("🌑",  "Rogue",        115, 36, "Assassin burst"),
         ("🌿",  "Druid",        130, 28, "Nature shaman"),
     ]
 
@@ -1039,12 +1127,17 @@ def create_character():
 
 def _show_ability_menu(player):
     """
-    Print the player's ability list and return their chosen index (0-based),
-    or -1 if they cancel.
+    Print the player's ability list with cooldown status and return their
+    chosen index (0-based), or -1 if they cancel.
     """
     print("\n  ✨ Choose an ability:")
     for i, ability in enumerate(player.abilities, start=1):
-        print(f"    {i}. {ability['name']} — {ability['desc']}")
+        cd = ability.get("cooldown", 0)
+        if cd > 0:
+            status = f"  ⏳ {cd} turn(s)"
+        else:
+            status = "  ✅ Ready"
+        print(f"    {i}. {ability['name']}{status} — {ability['desc']}")
     print("    0. Cancel")
 
     raw = input("  Ability number: ").strip()
@@ -1139,7 +1232,8 @@ def battle(player, wizard):
             else:
                 print("  ❌ Invalid choice — try again.")
 
-        # Some classes have end-of-turn hooks (e.g. Mage Arcane Surge)
+        # Tick cooldowns and end-of-turn hooks
+        player.tick_cooldowns()
         if hasattr(player, "end_of_turn"):
             player.end_of_turn()
 
