@@ -140,24 +140,25 @@ def print_title():
   ╚═════╝ ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚══════╝
     """
     print(title)
-    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...  ⚔️", delay=0.04)  # noqa: E501
+    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...\
+        ⚔️", delay=0.04)  # noqa: E501
     pause(0.8)
 
 
 def print_victory(player, wizard):
     """Print the ASCII art victory screen."""
     art = r"""
-    *      *   *    *      *    *    *      *
-  *    *      *   *    *      *    *      *
-        *   *        *    *       *    *
-  .-=========================================-.
-  |  \o/  THE REALM IS SAVED  \o/            |
-  |   |        HERO VICTORIOUS               |
-  |  / \                                     |
-  `-==========================================-'
-        *   *        *    *       *    *
-  *    *      *   *    *      *    *      *
-    *      *   *    *      *    *    *      *
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+    🏆                                               🏆
+
+         \o/    THE REALM IS SAVED!    \o/
+          |                             |
+         / \                           / \
+
+    ✨        * * * V I C T O R Y * * *        ✨
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """
     print(art)
     slow_print(f"  🏆  {player.name} has defeated {wizard.name}!", delay=0.05)
@@ -168,20 +169,21 @@ def print_victory(player, wizard):
 def print_defeat(player, wizard):
     """Print the ASCII art defeat screen."""
     art = r"""
-  .  .  .  .  .  .  .  .  .  .  .  .  .  .
-    .   the darkness wins   .   game over   .
-  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-         _/|          |\
-        / /           | \
-       / / ___    ___ | |
-       | |/   \  /   \| |
-       | |  x  ||  x  | |    ...you have
-       | |  __  ||  __  | |       fallen.
-       | | /  \ || /  \ | |
-        \_\____/  \____/_/
+    💀                                               💀
 
-  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+                    x           x
+                     \         /
+                      \       /
+                       \     /
+                        \   /
+                         \ /
+                          x
+
+    🌑         * * * G A M E   O V E R * * *       🌑
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """
     print(art)
     slow_print(f"  💀  {player.name} has fallen...", delay=0.05)
@@ -1103,7 +1105,7 @@ def create_character():
     ]
 
     for i, (emoji, cname, hp, atk, role) in enumerate(descriptions, start=1):
-        print(f"  {i}. {emoji} {cname:<13} | HP: {hp:<3} | ATK: {atk:<2} | {role}")
+        print(f"  {i}. {emoji} {cname:<13}| HP: {hp:<4}| ATK: {atk:<3}| {role}")
 
     print("═" * 50)
 
