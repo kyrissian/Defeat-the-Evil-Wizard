@@ -12,6 +12,7 @@ Design notes
 - The battle loop is class-agnostic: it reads those lists at runtime, so
   adding a new class never requires touching battle().
 """
+# pylint: disable=too-many-lines
 
 import os
 import random
@@ -60,10 +61,12 @@ WIZARD_TAUNTS = [
 # Intro lines spoken when each class enters battle
 CLASS_INTROS = {
     "Warrior":     "🗡️  \"{name}\" cracks their knuckles. \"Let's make this quick.\"",
-    "Mage":        "🔮  \"{name}\" crackles with arcane energy. \"You are merely a footnote in my research.\"",
+    "Mage":        "🔮  \"{name}\" crackles with arcane energy. "
+                  "\"You are merely a footnote in my research.\"",
     "Archer":      "🏹  \"{name}\" notches an arrow. \"I never miss.\"",
     "Paladin":     "🛡️  \"{name}\" raises their shield. \"By the Light, you shall fall.\"",
-    "DeathKnight": "💀  \"{name}\" rises from shadow. \"Death comes for us all... yours comes first.\"",
+    "DeathKnight": "💀  \"{name}\" rises from shadow. "
+                  "\"Death comes for us all... yours comes first.\"",
     "HolyPriest":  "✨  \"{name}\" glows with divine radiance. \"The Light will prevail.\"",
     "Rogue":       "🗡️  \"{name}\" melts from the shadows. \"You won't see me coming.\"",
     "Druid":       "🌿  \"{name}\" communes with nature. \"The wilds fight with me today.\"",
@@ -92,22 +95,32 @@ def pause(seconds=0.6):
 
 def print_hp_bars(player, wizard):
     """
-    Print a side-by-side HP bar display for both combatants.
+    Print HP bars scaled to actual HP values, not percentage.
+
+    The bar widths are proportional to each character's max_health relative
+    to the highest max_health in the fight — so a 200 HP character gets a
+    visually longer bar than a 150 HP one, which is more intuitive than
+    both showing full bars at the start.
 
     Parameters
     ----------
     player : Character subclass instance
     wizard : EvilWizard instance
     """
-    def make_bar(character, width=18):
-        ratio  = max(character.health, 0) / character.max_health
-        filled = int(width * ratio)
-        hp_bar = "█" * filled + "░" * (width - filled)
-        emoji  = CLASS_EMOJI.get(type(character).__name__, "❓")
-        return f"{emoji} {character.name[:12]:<12} [{hp_bar}] {character.health}/{character.max_health}"
+    max_bar   = 24   # bar width for the highest-HP combatant
+    name_col  = 16
+    highest   = max(player.max_health, wizard.max_health)
 
-    print(f"\n  {make_bar(player)}")
-    print(f"  {make_bar(wizard)}\n")
+    def make_bar(label, character):
+        # Scale bar width proportionally to this character's max HP
+        bar_width = max(1, int(max_bar * character.max_health / highest))
+        filled    = int(bar_width * max(character.health, 0) / character.max_health)
+        hp_bar    = "█" * filled + "░" * (bar_width - filled)
+        name      = character.name[:name_col].ljust(name_col)
+        return f"{label} {name} [{hp_bar}] {character.health}/{character.max_health}"
+
+    print(f"\n  {make_bar('YOU', player)}")
+    print(f"  {make_bar('FOE', wizard)}\n")
 
 
 def print_title():
@@ -127,20 +140,25 @@ def print_title():
   ╚═════╝ ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚══════╝
     """
     print(title)
-    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...  ⚔️", delay=0.04)
+    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...\
+        ⚔️", delay=0.04)  # noqa: E501
     pause(0.8)
 
 
 def print_victory(player, wizard):
     """Print the ASCII art victory screen."""
     art = r"""
-   ___  ___  ___  ___  ___  ___  ___  _ 
-  |__ \|__ \|__ \|__ \|__ \|__ \|__ \| |
-     ) |  ) |  ) |  ) |  ) |  ) |  ) | |
-    / /  / /  / /  / /  / /  / /  / /|_|
-   |_|  |_|  |_|  |_|  |_|  |_|  |_| (_)
-
-        V  I  C  T  O  R  Y  !
+    *      *   *    *      *    *    *      *
+  *    *      *   *    *      *    *      *
+        *   *        *    *       *    *
+  .-=========================================-.
+  |  \o/  THE REALM IS SAVED  \o/            |
+  |   |        HERO VICTORIOUS               |
+  |  / \                                     |
+  `-==========================================-'
+        *   *        *    *       *    *
+  *    *      *   *    *      *    *      *
+    *      *   *    *      *    *    *      *
     """
     print(art)
     slow_print(f"  🏆  {player.name} has defeated {wizard.name}!", delay=0.05)
@@ -151,18 +169,28 @@ def print_victory(player, wizard):
 def print_defeat(player, wizard):
     """Print the ASCII art defeat screen."""
     art = r"""
-   ___  ___ ___ ___ ___ ___ _____
-  |   \| __| __| __| __|_ _|_   _|
-  | |) | _|| _|| _|| _| | |  | |
-  |___/|___|_|  |___|___| ___| |_|  _ 
-                              |___|(_)
+  .  .  .  .  .  .  .  .  .  .  .  .  .  .
+    .   the darkness wins   .   game over   .
+  .  .  .  .  .  .  .  .  .  .  .  .  .  .
 
-        D  E  F  E  A  T  .  .  .
+         _/|          |\
+        / /           | \
+       / / ___    ___ | |
+       | |/   \  /   \| |
+       | |  x  ||  x  | |    ...you have
+       | |  __  ||  __  | |       fallen.
+       | | /  \ || /  \ | |
+        \_\____/  \____/_/
+
+  .  .  .  .  .  .  .  .  .  .  .  .  .  .
     """
     print(art)
     slow_print(f"  💀  {player.name} has fallen...", delay=0.05)
     pause(0.4)
-    slow_print(f"  {wizard.name} cackles in triumph... the realm is lost. 🌑", delay=0.04)
+    slow_print(
+        f"  {wizard.name} cackles in triumph... the realm is lost. 🌑",
+        delay=0.04
+    )
 
 
 # ─────────────────────────────────────────────
@@ -392,7 +420,11 @@ class Mage(Character):
     def _arcane_surge(self, _opponent):
         self.attack_power += self._surge_bonus
         self._surge_active = True
-        slow_print(f"  ⚡ Attack power surges to {self.attack_power} for one turn!")
+        slow_print(
+            f"  ⚡ Arcane Surge active! Your attack power is now {self.attack_power}.\n"
+            f"  💡 Your NEXT attack or ability this turn hits at full surge power.\n"
+            f"  ⚠️  The bonus expires automatically after the wizard's turn."
+        )
 
     def _blink(self, _opponent):
         self.status_effects["evade"] = True
@@ -525,7 +557,8 @@ class Paladin(Character):
         damage = int(self.attack_power * 0.9)
         self._deal_damage(opponent, damage)
         self.health = min(self.health + 15, self.max_health)
-        slow_print(f"  🔥 Holy ground heals {self.name} for 15. HP: {self.health}/{self.max_health}")
+        slow_print(f"  🔥 Holy ground heals {self.name} for 15. "
+                   f"HP: {self.health}/{self.max_health}")
 
     def _aura_of_valor(self, _opponent):
         self.max_health += 30
@@ -591,7 +624,8 @@ class DeathKnight(Character):
             slow_print("  ❌ Not enough HP to sacrifice for Blood Boil!")
             return
         self.health -= cost
-        slow_print(f"  🩸 {self.name} sacrifices {cost} HP... HP: {self.health}/{self.max_health}")
+        slow_print(f"  🩸 {self.name} sacrifices {cost} HP... "
+                   f"HP: {self.health}/{self.max_health}")
         damage = int(self.attack_power * 2.5)
         self._deal_damage(opponent, damage)
 
@@ -849,7 +883,7 @@ class EvilWizard(Character):
     """
 
     def __init__(self, name):
-        super().__init__(name, health=150, attack_power=15, heal_power=5)
+        super().__init__(name, health=200, attack_power=20, heal_power=5)
         self._enraged   = False
         self._void_used = False
 
@@ -875,8 +909,9 @@ class EvilWizard(Character):
         if not self._enraged and self.health <= self.max_health * 0.5:
             self._enraged = True
             self.attack_power += 5
-            slow_print(f"\n  ⚡ {self.name} becomes ENRAGED! Attack power → {self.attack_power}!",
-                       delay=0.05)
+            slow_print(
+                f"\n  ⚡ {self.name} becomes ENRAGED! Attack power → {self.attack_power}!",
+                delay=0.05)
             pause(0.4)
 
         # Dark Suppression — activates only against a HolyPriest
@@ -966,19 +1001,21 @@ def create_character():
     slow_print("  ⚔️   CHOOSE YOUR HERO   ⚔️", delay=0.04)
     print("═" * 50)
 
-    descriptions = {
-        "1": "⚔️  Warrior      | HP: 160 | ATK: 28 | Tank & sustain",
-        "2": "🔮 Mage          | HP: 100 | ATK: 40 | Glass cannon",
-        "3": "🏹 Archer        | HP: 120 | ATK: 32 | Speed & range",
-        "4": "🛡️  Paladin       | HP: 150 | ATK: 26 | Holy defender",
-        "5": "💀 Death Knight  | HP: 170 | ATK: 34 | Dark drainer",
-        "6": "✨ Holy Priest   | HP: 200 | ATK: 32 | Most resilient",
-        "7": "🗡️  Rogue         | HP: 115 | ATK: 36 | Assassin burst",
-        "8": "🌿 Druid         | HP: 130 | ATK: 28 | Nature shaman",
-    }
+    # Each entry: (emoji, name, hp, atk, role)
+    # Printed in fixed columns so everything lines up regardless of emoji width.
+    descriptions = [
+        ("⚔️",  "Warrior",      160, 28, "Tank & sustain"),
+        ("🔮",  "Mage",         100, 40, "Glass cannon"),
+        ("🏹",  "Archer",       120, 32, "Speed & range"),
+        ("🛡️",  "Paladin",      150, 26, "Holy defender"),
+        ("💀",  "Death Knight", 170, 34, "Dark drainer"),
+        ("✨",  "Holy Priest",  200, 32, "Most resilient"),
+        ("🗡️",  "Rogue",        115, 36, "Assassin burst"),
+        ("🌿",  "Druid",        130, 28, "Nature shaman"),
+    ]
 
-    for key, desc in descriptions.items():
-        print(f"  {key}. {desc}")
+    for i, (emoji, cname, hp, atk, role) in enumerate(descriptions, start=1):
+        print(f"  {i}. {emoji} {cname:<13} | HP: {hp:<3} | ATK: {atk:<2} | {role}")
 
     print("═" * 50)
 
@@ -1074,6 +1111,16 @@ def battle(player, wizard):
                 idx = _show_ability_menu(player)
                 if idx >= 0:
                     player.use_ability(idx, wizard)
+                    # Arcane Surge is a buff — give the Mage a follow-up action
+                    if (hasattr(player, "_surge_active")
+                            and player._surge_active  # pylint: disable=protected-access
+                            and idx == 2):
+                        slow_print(
+                            "\n  ⚡ Surge is active — pick your follow-up action!"
+                        )
+                        follow = input("\n  Follow-up (1=Attack, skip=pass): ").strip()
+                        if follow == "1":
+                            player.attack(wizard)
                     valid = True
                 else:
                     print("  Returning to action menu...")
