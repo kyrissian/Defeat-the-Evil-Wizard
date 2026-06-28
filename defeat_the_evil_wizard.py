@@ -16,17 +16,19 @@ Design notes
 
 import os
 import random
+import subprocess
 import sys
 import time
 from typing import Any
 
 # Force UTF-8 on Windows before any output is attempted.
-# If PYTHONUTF8 is not already set, re-launch this script with it enabled
-# so the entire process starts in UTF-8 mode from the very beginning.
+# If UTF-8 mode is not active, re-launch this script with -X utf8.
+# This avoids path quoting issues when the script path contains spaces.
 if os.name == "nt" and os.environ.get("PYTHONUTF8") != "1":
-    os.environ["PYTHONUTF8"] = "1"
-    SCRIPT_PATH = f'"{sys.argv[0]}"'
-    sys.exit(os.spawnv(os.P_WAIT, sys.executable, [sys.executable, SCRIPT_PATH]))
+    script_path = os.path.abspath(sys.argv[0])
+    cmd = [sys.executable, "-X", "utf8", script_path, *sys.argv[1:]]
+    result = subprocess.run(cmd, check=False)
+    sys.exit(result.returncode)
 
 
 # ─────────────────────────────────────────────
@@ -175,7 +177,7 @@ def print_title():
     pause(0.8)
 
 
-def print_victory(player, wizard):
+def print_victory(player, boss, final_boss=True):
     """Print the ASCII art victory screen."""
     art = r"""
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -191,9 +193,12 @@ def print_victory(player, wizard):
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     """
     print(art)
-    slow_print(f"  🏆  {player.name} has defeated {wizard.name}!", delay=0.05)
+    slow_print(f"  🏆  {player.name} has defeated {boss.name}!", delay=0.05)
     pause(0.4)
-    slow_print("  The darkness recedes. Light returns to the realm. ✨", delay=0.04)
+    if final_boss:
+        slow_print("  The darkness recedes. Light returns to the realm. ✨", delay=0.04)
+    else:
+        slow_print("  A new threat stirs... this war is not over yet. ⚔️", delay=0.04)
 
 
 def print_defeat(player, wizard):
@@ -1278,6 +1283,8 @@ BOSS_OPTIONS = {
     ),
 }
 
+BETWEEN_BOSS_HEAL_RATIO = 0.35
+
 
 def create_character():
     """
@@ -1350,6 +1357,27 @@ def choose_boss():
     return cls(name)
 
 
+def _remaining_boss_option(current_boss):
+    """Return the remaining boss option tuple after current_boss, or None."""
+    for name, style, cls, emoji in BOSS_OPTIONS.values():
+        if cls is not type(current_boss):
+            return name, style, cls, emoji
+    return None
+
+
+def _between_boss_heal(player):
+    """Restore a partial amount of HP between boss fights (not full)."""
+    heal_amount = max(1, int(player.max_health * BETWEEN_BOSS_HEAL_RATIO))
+    before = player.health
+    player.health = min(player.health + heal_amount, player.max_health)
+    restored = player.health - before
+    print("\n" + "═" * 50)
+    slow_print("  🕊️  Brief respite between battles...", delay=0.04)
+    slow_print(f"  💚 {player.name} recovers {restored} HP "
+               f"({player.health}/{player.max_health}).", delay=0.04)
+    print("═" * 50)
+
+
 def _show_ability_menu(player):
     """
     Print the player's ability list with cooldown status and return their
@@ -1375,7 +1403,7 @@ def _show_ability_menu(player):
     return idx
 
 
-def battle(player, boss):
+def battle(player, boss, final_boss=True):
     """
     Main turn-based battle loop.
 
@@ -1389,6 +1417,7 @@ def battle(player, boss):
     ----------
     player : Character subclass instance
     boss : Character boss instance
+    final_boss : bool -- whether this is the final encounter of the run
     """
     pause(0.5)
     boss_emoji = CLASS_EMOJI.get(type(boss).__name__, "👹")
@@ -1469,10 +1498,13 @@ def battle(player, boss):
     pause(0.8)
     print(f"\n{'═' * 50}")
     if boss.health <= 0:
-        print_victory(player, boss)
+        print_victory(player, boss, final_boss=final_boss)
+        print(f"{'═' * 50}\n")
+        return True
     else:
         print_defeat(player, boss)
-    print(f"{'═' * 50}\n")
+        print(f"{'═' * 50}\n")
+        return False
 
 
 def main():
@@ -1480,8 +1512,23 @@ def main():
     print_title()
     pause(0.5)
     player = create_character()
-    boss = choose_boss()
-    battle(player, boss)
+    first_boss = choose_boss()
+
+    remaining = _remaining_boss_option(first_boss)
+    is_only_boss = remaining is None
+    won_first = battle(player, first_boss, final_boss=is_only_boss)
+    if not won_first or is_only_boss:
+        return
+
+    _between_boss_heal(player)
+    next_name, _style, next_cls, _emoji = remaining
+    choice = input(f"\nAnother boss appears: {next_name}. Fight next boss? (y/n): ").strip().lower()
+    if choice not in {"y", "yes"}:
+        slow_print("\n  🏕️  You withdraw after the first victory. The realm is safer for now.")
+        return
+
+    second_boss = next_cls(next_name)
+    battle(player, second_boss, final_boss=True)
 
 
 if __name__ == "__main__":
