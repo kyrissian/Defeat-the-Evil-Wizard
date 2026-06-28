@@ -1,119 +1,112 @@
-"""
-wizard_battle.py
-================
-A turn-based RPG where a hero battles the Evil Wizard.
-
-Design notes
-------------
-- All shared behavior (heal, random attack, ability dispatch) lives in the
-  base Character class so subclasses stay DRY.
-- Each subclass declares `self.abilities` — a list of dicts — and
-  `self.status_effects` for passive flags (shield, evade, etc.).
-- The battle loop is class-agnostic: it reads those lists at runtime, so
-  adding a new class never requires touching battle().
-"""
-# pylint: disable=too-many-lines
+"""Run a turn-based hero-vs-boss fantasy battle game."""
 
 import os
 import random
 import subprocess
 import sys
 import time
+import builtins
 from typing import Any
 
-# Force UTF-8 on Windows before any output is attempted.
-# If UTF-8 mode is not active, re-launch this script with -X utf8.
-# This avoids path quoting issues when the script path contains spaces.
-if os.name == "nt" and os.environ.get("PYTHONUTF8") != "1":
+if os.name == "nt" and sys.flags.utf8_mode != 1 and os.environ.get("WIZARD_UTF8_REEXEC") != "1":
     script_path = os.path.abspath(sys.argv[0])
     cmd = [sys.executable, "-X", "utf8", script_path, *sys.argv[1:]]
-    result = subprocess.run(cmd, check=False)
+    env = os.environ.copy()
+    env["WIZARD_UTF8_REEXEC"] = "1"
+    result = subprocess.run(cmd, check=False, env=env)
     sys.exit(result.returncode)
 
-
-# ─────────────────────────────────────────────
-#  PRESENTATION HELPERS
-# ─────────────────────────────────────────────
-
-# Emoji icons used throughout the UI
 CLASS_EMOJI = {
-    "Warrior":     "⚔️",
-    "Mage":        "🔮",
-    "Archer":      "🏹",
-    "Paladin":     "🛡️",
-    "DeathKnight": "💀",
-    "HolyPriest":  "✨",
-    "Rogue":       "🗡️",
-    "Druid":       "🌿",
-    "EvilWizard":  "🧙",
+    "Warrior":       "⚔️",
+    "Mage":          "🔮",
+    "Archer":        "🏹",
+    "Paladin":       "🛡️",
+    "DeathKnight":   "💀",
+    "HolyPriest":    "✨",
+    "Rogue":         "🗡️",
+    "Druid":         "🌿",
+    "EvilWizard":    "🧙",
     "AncientDragon": "🐉",
 }
 
 WIZARD_TAUNTS = [
     "You dare challenge ME?! 😈",
     "Your suffering amuses me... 🌑",
-    "Is that all you have?! 💀",
-    "I've crushed stronger heroes than you! 😤",
-    "Your end is near, fool! ⚡",
     "The darkness will consume you! 🌑",
-    "Ha! You fight like a peasant! 😂",
     "Tremble before my power! 💜",
     "You cannot win... give up now! 😈",
-    "My magic grows stronger with every passing moment! ✨",
 ]
 
 DRAGON_TAUNTS = [
     "You enter my lair and expect mercy? 🐲",
     "I have burned kingdoms to ash. 🔥",
-    "Your courage smells like fear. 😈",
-    "Kneel, little hero, and I may spare your bones. 💀",
     "Feel the heat of the abyss! 🌋",
 ]
 
-# Intro lines spoken when each class enters battle
 CLASS_INTROS = {
     "Warrior":     "🗡️  \"{name}\" cracks their knuckles. \"Let's make this quick.\"",
-    "Mage":        "🔮  \"{name}\" crackles with arcane energy. "
-                  "\"You are merely a footnote in my research.\"",
+    "Mage":        "🔮  \"{name}\" crackles with arcane energy.",
     "Archer":      "🏹  \"{name}\" notches an arrow. \"I never miss.\"",
-    "Paladin":     "🛡️  \"{name}\" raises their shield. \"By the Light, you shall fall.\"",
-    "DeathKnight": "💀  \"{name}\" rises from shadow. "
-                  "\"Death comes for us all... yours comes first.\"",
-    "HolyPriest":  "✨  \"{name}\" glows with divine radiance. \"The Light will prevail.\"",
-    "Rogue":       "🗡️  \"{name}\" melts from the shadows. \"You won't see me coming.\"",
-    "Druid":       "🌿  \"{name}\" communes with nature. \"The wilds fight with me today.\"",
+    "Paladin":     "🛡️  \"{name}\" raises their shield.",
+    "DeathKnight": "💀  \"{name}\" rises from shadow.",
+    "HolyPriest":  "✨  \"{name}\" glows with divine radiance.",
+    "Rogue":       "🗡️  \"{name}\" melts from the shadows.",
+    "Druid":       "🌿  \"{name}\" communes with nature.",
 }
 
-STATUS_EVADE = "evade"
-STATUS_SHIELD = "shield"
-STATUS_FROZEN = "frozen"
-STATUS_BLINDED = "blinded"
-STATUS_POISONED = "poisoned"
-STATUS_MOONFIRE = "moonfire"
+TOMBSTONE = [
+    ".-------.",
+    "|       |",
+    "| R.I.P |",
+    "|       |",
+    "|{name:^7}|",
+    "|       |",
+    "__|_______|__",
+    "|             |",
+    "__|___________|__",
+]
+
+STATUS_EVADE           = "evade"
+STATUS_SHIELD          = "shield"
+STATUS_FROZEN          = "frozen"
+STATUS_BLINDED         = "blinded"
+STATUS_POISONED        = "poisoned"
+STATUS_MOONFIRE        = "moonfire"
 STATUS_DARK_SUPPRESSED = "dark_suppressed"
 
 STATUS_LABELS = {
-    STATUS_EVADE: "Evade",
-    STATUS_SHIELD: "Shield",
-    STATUS_FROZEN: "Frozen",
-    STATUS_BLINDED: "Blinded",
-    STATUS_POISONED: "Poisoned",
-    STATUS_MOONFIRE: "Moonfire",
+    STATUS_EVADE:           "Evade",
+    STATUS_SHIELD:          "Shield",
+    STATUS_FROZEN:          "Frozen",
+    STATUS_BLINDED:         "Blinded",
+    STATUS_POISONED:        "Poisoned",
+    STATUS_MOONFIRE:        "Moonfire",
     STATUS_DARK_SUPPRESSED: "Dark Suppressed",
 }
 
 Ability = dict[str, Any]
 
 
-def slow_print(text, delay=0.03):
-    """
-    Print text one character at a time for a typewriter effect.
+def ability(name: str, desc: str, method, cd: int = 0) -> Ability:
+    """Build an ability dict, keeping hero __init__ methods to one line per ability."""
+    return {"name": name, "desc": desc, "method": method, "max_cooldown": cd, "cooldown": 0}
 
-    Parameters
-    ----------
-    text  : str   -- the string to print
-    delay : float -- seconds between each character (default 0.03)
-    """
+
+def prompt_input(prompt=""):
+    """Read a line from stdin; exit gracefully on EOF or keyboard interrupt."""
+    try:
+        return builtins.input(prompt)
+    except EOFError:
+        print("\n  ❌ No interactive input is available.")
+        print("  Run this game in an interactive terminal (PowerShell/VS Code Terminal).")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n  👋 Game interrupted.")
+        sys.exit(0)
+
+
+def slow_print(text, delay=0.03):
+    """Print text one character at a time for a dramatic effect."""
     for char in text:
         print(char, end="", flush=True)
         time.sleep(delay)
@@ -121,30 +114,18 @@ def slow_print(text, delay=0.03):
 
 
 def pause(seconds=0.6):
-    """Short pause to let dramatic moments breathe."""
+    """Sleep for the given number of seconds."""
     time.sleep(seconds)
 
 
-def print_hp_bars(player, wizard):
-    """
-    Print HP bars scaled to actual HP values, not percentage.
-
-    The bar widths are proportional to each character's max_health relative
-    to the highest max_health in the fight — so a 200 HP character gets a
-    visually longer bar than a 150 HP one, which is more intuitive than
-    both showing full bars at the start.
-
-    Parameters
-    ----------
-    player : Character subclass instance
-    wizard : EvilWizard instance
-    """
-    max_bar   = 24   # bar width for the highest-HP combatant
-    name_col  = 16
-    highest   = max(player.max_health, wizard.max_health)
+def print_hp_bars(player, boss):
+    """Print side-by-side HP bars scaled to each character's max health."""
+    max_bar  = 24
+    name_col = 16
+    highest  = max(player.max_health, boss.max_health)
 
     def make_bar(label, character):
-        # Scale bar width proportionally to this character's max HP
+        """Build a single labelled HP bar string."""
         bar_width = max(1, int(max_bar * character.max_health / highest))
         filled    = int(bar_width * max(character.health, 0) / character.max_health)
         hp_bar    = "█" * filled + "░" * (bar_width - filled)
@@ -152,120 +133,60 @@ def print_hp_bars(player, wizard):
         return f"{label} {name} [{hp_bar}] {character.health}/{character.max_health}"
 
     print(f"\n  {make_bar('YOU', player)}")
-    print(f"  {make_bar('FOE', wizard)}\n")
+    print(f"  {make_bar('FOE', boss)}\n")
 
 
 def print_title():
-    """Print the ASCII art title screen with a dramatic typewriter entrance."""
-    title = r"""
-  ██╗    ██╗██╗███████╗ █████╗ ██████╗ ██████╗
-  ██║    ██║██║╚══███╔╝██╔══██╗██╔══██╗██╔══██╗
-  ██║ █╗ ██║██║  ███╔╝ ███████║██████╔╝██║  ██║
-  ██║███╗██║██║ ███╔╝  ██╔══██║██╔══██╗██║  ██║
-  ╚███╔███╔╝██║███████╗██║  ██║██║  ██║██████╔╝
-   ╚══╝╚══╝ ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝
-  ██████╗  █████╗ ████████╗████████╗██╗     ███████╗
-  ██╔══██╗██╔══██╗╚══██╔══╝╚══██╔══╝██║     ██╔════╝
-  ██████╔╝███████║   ██║      ██║   ██║     █████╗
-  ██╔══██╗██╔══██║   ██║      ██║   ██║     ██╔══╝
-  ██████╔╝██║  ██║   ██║      ██║   ███████╗███████╗
-  ╚═════╝ ╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚══════╝╚══════╝
-    """
-    print(title)
-    slow_print("  ⚔️   Defeat the Evil Wizard before he destroys the realm...\
-        ⚔️", delay=0.04)  # noqa: E501
+    """Print the game title banner."""
+    print("\n" + "═" * 50)
+    slow_print("  ⚔️   DEFEAT THE EVIL WIZARD   ⚔️", delay=0.04)
+    slow_print("  Defeat the Evil Wizard before he destroys the realm...", delay=0.03)
+    print("═" * 50)
     pause(0.8)
 
 
 def print_victory(player, boss, final_boss=True):
-    """Print the ASCII art victory screen."""
-    art = r"""
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-    🏆                                        🏆
-
-         \o/      THE REALM IS SAVED!     \o/
-          |                                |
-         / \                              / \
-
-     ✨       * * * V I C T O R Y * * *      ✨
-
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    """
-    print(art)
-    slow_print(f"  🏆  {player.name} has defeated {boss.name}!", delay=0.05)
-    pause(0.4)
+    """Print the victory screen after defeating a boss."""
+    print("\n" + "═" * 50)
+    slow_print(f"  🏆  {player.name} has defeated {boss.name}!")
     if final_boss:
-        slow_print("  The darkness recedes. Light returns to the realm. ✨", delay=0.04)
+        slow_print("  The darkness recedes. Light returns to the realm. ✨")
     else:
-        slow_print("  A new threat stirs... this war is not over yet. ⚔️", delay=0.04)
+        slow_print("  A new threat stirs... this war is not over yet. ⚔️")
+    print("═" * 50)
 
 
-def print_defeat(player, wizard):
-    """Print the ASCII art defeat screen."""
-    art = r"""
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-    💀                                            💀
-
-                        .-------.
-                        |       |
-                        | R.I.P |
-                        |       |
-                        | Brave |
-                        | Hero  |
-                      __|_______|__
-                     |             |
-                   __|_____________|__
-
-    🌑        * * * G A M E   O V E R * * *       🌑
-
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    """
-    print(art)
-    slow_print(f"  💀  {player.name} has fallen...", delay=0.05)
-    pause(0.4)
-    slow_print(
-        f"  {wizard.name} cackles in triumph... the realm is lost. 🌑",
-        delay=0.04
-    )
+def print_defeat(player, boss):
+    """Print the defeat screen with a tombstone and GAME OVER banner."""
+    print("\n" + "═" * 50)
+    for line in TOMBSTONE:
+        slow_print("  " + line.format(name=player.name[:7]), delay=0.02)
+        pause(0.05)
+    pause(0.3)
+    slow_print("\n  * * * G A M E   O V E R * * *")
+    slow_print(f"  {boss.name} cackles in triumph... the realm is lost. 🌑")
+    print("═" * 50)
 
 
 # ─────────────────────────────────────────────
-#  BASE CLASS
+#  BASE CHARACTER
 # ─────────────────────────────────────────────
 
 class Character:
-    """
-    Base class for every character in the game.
-
-    Attributes
-    ----------
-    name : str
-    health : int
-    attack_power : int
-    max_health : int
-    heal_power : int   -- how much health a basic heal restores
-    abilities : list   -- list of {'name': str, 'desc': str, 'method': callable}
-    status_effects : dict -- passive flags set by abilities (e.g. 'shield', 'evade')
-    """
+    """Shared stats, combat methods, and status-effect logic for all characters."""
 
     def __init__(self, name, health, attack_power, heal_power=20):
-        self.name         = name
-        self.health       = health
-        self.attack_power = attack_power
-        self.max_health   = health
-        self.heal_power   = heal_power
-        self.abilities: list[Ability] = []      # filled by each subclass
-        self.status_effects: dict[str, bool] = {}  # e.g. {'shield': True}
-
-    # ── Core actions ────────────────────────────────────────────────────
+        """Initialise core stats and empty ability/status containers."""
+        self.name            = name
+        self.health          = health
+        self.attack_power    = attack_power
+        self.max_health      = health
+        self.heal_power      = heal_power
+        self.abilities: list[Ability]        = []
+        self.status_effects: dict[str, bool] = {}
 
     def attack(self, opponent):
-        """
-        Deal randomized damage (±20 % of attack_power) to opponent.
-        If opponent has a shield or evade status, the hit is blocked/missed.
-        """
+        """Deal randomised physical damage; respect Moonfire, Evade, and Shield."""
         if self.status_effects.get(STATUS_MOONFIRE):
             self.health -= 8
             slow_print(f"  🌙 Moonfire burns {self.name} for 8 damage!")
@@ -273,85 +194,65 @@ class Character:
                 slow_print(f"  ☠️  {self.name} is consumed by Moonfire!")
                 return
 
-        # Check opponent's passive defenses first
         if opponent.try_negate_incoming_attack(self.name):
             return
 
-        # Random damage ±20 %
-        low    = int(self.attack_power * 0.8)
-        high   = int(self.attack_power * 1.2)
-        damage = random.randint(low, high)
-
+        damage = random.randint(
+            int(self.attack_power * 0.8),
+            int(self.attack_power * 1.2),
+        )
         opponent.health -= damage
         slow_print(f"  ⚔️  {self.name} attacks {opponent.name} for {damage} damage!")
         if opponent.health <= 0:
             slow_print(f"  💥 {opponent.name} has been defeated!")
 
     def heal(self):
-        """Restore heal_power HP without exceeding max_health."""
-        before  = self.health
+        """Restore HP up to max using this character's heal_power."""
+        before = self.health
         self.health = min(self.health + self.heal_power, self.max_health)
-        restored = self.health - before
-        slow_print(f"  💚 {self.name} heals for {restored} HP! "
-                   f"({self.health}/{self.max_health})")
+        healed = self.health - before
+        slow_print(f"  💚 {self.name} heals for {healed} HP! ({self.health}/{self.max_health})")
 
     def use_ability(self, index, opponent):
-        """
-        Dispatch ability by index in self.abilities list.
-        Abilities with cooldown > 0 cannot be used until the counter reaches 0.
-        After a successful use, the cooldown is reset to its max value.
-
-        Parameters
-        ----------
-        index    : int       -- 0-based index into self.abilities
-        opponent : Character
-        """
+        """Fire the ability at the given index if it exists and is off cooldown."""
         if index < 0 or index >= len(self.abilities):
             print("  ❌ Invalid ability choice.")
             return
-        ability = self.abilities[index]
-
-        # Check cooldown
-        remaining = ability.get("cooldown", 0)
+        ab        = self.abilities[index]
+        remaining = ab.get("cooldown", 0)
         if remaining > 0:
-            slow_print(
-                f"  ⏳ {ability['name']} is on cooldown for "
-                f"{remaining} more turn(s)!"
-            )
+            slow_print(f"  ⏳ {ab['name']} is on cooldown for {remaining} more turn(s)!")
             return
-
-        slow_print(f"\n  ✨ {self.name} uses {ability['name']}!", delay=0.05)
+        slow_print(f"\n  ✨ {self.name} uses {ab['name']}!", delay=0.05)
         pause(0.3)
-        ability["method"](opponent)
-
-        # Reset cooldown after use
-        if "max_cooldown" in ability:
-            ability["cooldown"] = ability["max_cooldown"]
+        ab["method"](opponent)
+        if "max_cooldown" in ab:
+            ab["cooldown"] = ab["max_cooldown"]
 
     def tick_cooldowns(self):
-        """
-        Decrement all ability cooldowns by 1 at the end of each turn.
-        Called by the battle loop automatically.
-        """
-        for ability in self.abilities:
-            if ability.get("cooldown", 0) > 0:
-                ability["cooldown"] -= 1
+        """Reduce every ability's remaining cooldown by one at end of turn."""
+        for ab in self.abilities:
+            if ab.get("cooldown", 0) > 0:
+                ab["cooldown"] -= 1
 
     def start_of_turn(self):
-        """Turn hook for subclasses that need start-of-turn effects."""
+        """Hook called at the start of this character's turn (override in subclasses)."""
+        return None
 
     def end_of_turn(self):
-        """Turn hook for subclasses that need end-of-turn effects."""
+        """Hook called at the end of this character's turn (override in subclasses)."""
+        return None
 
     def wants_follow_up_after_ability(self, _ability_index):
-        """Whether this class wants an immediate follow-up action after an ability."""
+        """Return True if this character gets a bonus action after the given ability."""
         return False
 
     def follow_up_action(self, _opponent):
-        """Optional follow-up action handler used by the battle loop."""
+        """Execute the bonus follow-up action (override in subclasses that need it)."""
+        return None
 
     def try_negate_incoming_attack(self, attacker_name):
-        """Resolve defensive statuses and return True if an attack is negated."""
+        """Consume Evade or Shield to block an incoming hit; return True if blocked."""
         if self.status_effects.get(STATUS_EVADE):
             slow_print(f"  💨 {self.name} evades {attacker_name}'s attack!")
             self.status_effects[STATUS_EVADE] = False
@@ -363,7 +264,7 @@ class Character:
         return False
 
     def should_skip_turn_from_control(self):
-        """Return True if control effects force this character to skip turn."""
+        """Return True and print a message if Frozen or Blinded causes a lost turn."""
         if self.status_effects.get(STATUS_FROZEN):
             self.status_effects[STATUS_FROZEN] = False
             slow_print(f"  ❄️  {self.name} is frozen and cannot act this turn!")
@@ -376,847 +277,622 @@ class Character:
         return False
 
     def display_stats(self):
-        """Print current HP, max HP, and attack power."""
+        """Print a detailed stat block including HP bar and active status effects."""
         bar_len = 20
-        ratio   = max(self.health, 0) / self.max_health
-        filled  = int(bar_len * ratio)
+        filled  = int(bar_len * max(self.health, 0) / self.max_health)
         hp_bar  = "█" * filled + "░" * (bar_len - filled)
         emoji   = CLASS_EMOJI.get(type(self).__name__, "❓")
-        print(f"\n  {emoji} {self.name} | [{hp_bar}] {self.health}/{self.max_health} HP "
-              f"| ⚔️  ATK {self.attack_power}")
-        if self.status_effects:
-            active = [k for k, v in self.status_effects.items() if v]
-            if active:
-                labels = [STATUS_LABELS.get(k, k.replace("_", " ").title()) for k in active]
-                print(f"     🔮 Active effects: {', '.join(labels)}")
-
-    # ── Helper used by subclass abilities ───────────────────────────────
+        print(
+            f"\n  {emoji} {self.name} | [{hp_bar}] {self.health}/{self.max_health} HP"
+            f" | ⚔️  ATK {self.attack_power}"
+        )
+        active = [
+            STATUS_LABELS.get(k, k.replace("_", " ").title())
+            for k, v in self.status_effects.items() if v
+        ]
+        if active:
+            print(f"     🔮 Active effects: {', '.join(active)}")
 
     def _deal_damage(self, opponent, damage):
-        """Internal: deal exact damage (no random spread, bypasses effects)."""
+        """Apply a fixed damage value to opponent and report remaining HP."""
         opponent.health -= damage
-        slow_print(f"  💥 {opponent.name} takes {damage} damage! "
-                   f"({opponent.health}/{opponent.max_health} HP remaining)")
+        slow_print(
+            f"  💥 {opponent.name} takes {damage} damage!"
+            f" ({opponent.health}/{opponent.max_health} HP remaining)"
+        )
         if opponent.health <= 0:
             slow_print(f"  ☠️  {opponent.name} has been defeated!")
 
     def _drain_life(self, opponent, amount):
-        """Steal HP from opponent and return updated (opponent_hp, self_hp)."""
+        """Remove HP from opponent and add it to self; return (opponent_hp, self_hp)."""
         opponent.health -= amount
         self.health = min(self.health + amount, self.max_health)
         return opponent.health, self.health
 
 
 # ─────────────────────────────────────────────
-#  PLAYER CLASSES
+#  HERO CLASSES
 # ─────────────────────────────────────────────
 
 class Warrior(Character):
-    """
-    Warrior — A heavily armored melee fighter.
-
-    Stats   : High HP, moderate attack.
-    Flavor  : Bread-and-butter tank. Hard to kill, reliably dangerous.
-
-    Abilities
-    ---------
-    1. Shield Bash  — Stuns with 1.5× damage; blocks opponent's next hit.
-    2. Whirlwind    — Strikes for 2× damage in a wide arc.
-    3. Battle Cry   — Boosts own attack_power by 10 for the rest of the battle.
-    4. Last Stand   — When below 30 % HP, heals 40 and attacks immediately.
-    """
+    """Tank with sustain, shields, and a permanent attack buff."""
 
     def __init__(self, name):
-        super().__init__(name, health=160, attack_power=28, heal_power=20)
+        """Set up Warrior stats and abilities."""
+        super().__init__(name, health=160, attack_power=26, heal_power=20)
+        self._battle_cry_used = False
         self.abilities = [
-            {
-                "name":         "⚔️  Shield Bash",
-                "desc":         "Deal 1.5× damage and block the opponent's next attack.",
-                "method":       self._shield_bash,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌀 Whirlwind",
-                "desc":         "Spin attack dealing 2× damage.",
-                "method":       self._whirlwind,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "📣 Battle Cry",
-                "desc":         "Raise your attack power by 10 permanently.",
-                "method":       self._battle_cry,
-                "max_cooldown": 3,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🩸 Last Stand",
-                "desc":         "Heal 40 HP and strike back (only when below 30 % HP).",
-                "method":       self._last_stand,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
+            ability(
+                "⚔️  Shield Bash",
+                "Deal 1.5× damage and block the opponent's next attack.",
+                self._shield_bash, cd=2,
+            ),
+            ability(
+                "🌀 Whirlwind",
+                "Spin attack dealing 2× damage.",
+                self._whirlwind, cd=2,
+            ),
+            ability(
+                "📣 Battle Cry",
+                "One-time war cry: raise your attack power by 8 permanently.",
+                self._battle_cry, cd=3,
+            ),
         ]
 
     def _shield_bash(self, opponent):
-        damage = int(self.attack_power * 1.5)
-        self._deal_damage(opponent, damage)
+        """Deal 1.5× damage then raise a shield against the next incoming hit."""
+        self._deal_damage(opponent, int(self.attack_power * 1.5))
         self.status_effects[STATUS_SHIELD] = True
         slow_print(f"  🛡️  {self.name} raises shield — next attack will be blocked!")
 
     def _whirlwind(self, opponent):
-        damage = self.attack_power * 2
-        self._deal_damage(opponent, damage)
+        """Spin and deal 2× damage to the opponent."""
+        self._deal_damage(opponent, self.attack_power * 2)
 
     def _battle_cry(self, _opponent):
-        self.attack_power += 10
+        """Permanently raise attack power by 8; usable only once per battle."""
+        if self._battle_cry_used:
+            slow_print("  ❌ Battle Cry can only be used once per battle!")
+            return
+        self.attack_power += 8
+        self._battle_cry_used = True
         slow_print(f"  📣 {self.name} roars! Attack power raised to {self.attack_power}.")
-
-    def _last_stand(self, opponent):
-        threshold = int(self.max_health * 0.3)
-        if self.health <= threshold:
-            self.health = min(self.health + 40, self.max_health)
-            slow_print(f"  🩸 {self.name} refuses to fall! Healed to {self.health} HP.")
-            self._deal_damage(opponent, self.attack_power)
-        else:
-            slow_print(f"  ❌ Last Stand only triggers below 30 % HP "
-                       f"({threshold} HP). Current HP: {self.health}.")
 
 
 class Mage(Character):
-    """
-    Mage — Glass cannon spellcaster.
-
-    Stats   : Low HP, highest base attack.
-    Flavor  : Fragile but devastating; rewards aggressive play.
-
-    Abilities
-    ---------
-    1. Fireball     — Deals 2× damage in a blazing explosion.
-    2. Frost Nova   — Freezes opponent; they skip their next attack.
-    3. Arcane Surge — Temporarily boost attack_power by 15 for 1 turn.
-    4. Blink        — Teleport to safety; evade next attack.
-    """
+    """Glass cannon with a surge mechanic for double-action turns."""
 
     def __init__(self, name):
-        super().__init__(name, health=100, attack_power=40, heal_power=15)
+        """Set up Mage stats and abilities."""
+        super().__init__(name, health=105, attack_power=38, heal_power=15)
         self._surge_active = False
-        self._surge_bonus  = 15
+        self._surge_bonus  = 12
         self.abilities = [
-            {
-                "name":         "🔥 Fireball",
-                "desc":         "Hurl a fireball for 2× damage.",
-                "method":       self._fireball,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "❄️  Frost Nova",
-                "desc":         "Freeze the opponent; they lose their next attack.",
-                "method":       self._frost_nova,
-                "max_cooldown": 3,
-                "cooldown":     0,
-            },
-            {
-                "name":         "⚡ Arcane Surge",
-                "desc":         "Boost attack power by 15 — then pick a follow-up action.",
-                "method":       self._arcane_surge,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "💨 Blink",
-                "desc":         "Teleport — your next incoming attack misses.",
-                "method":       self._blink,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
+            ability(
+                "🔥 Fireball",
+                "Hurl a fireball for 1.8× damage.",
+                self._fireball, cd=2,
+            ),
+            ability(
+                "❄️  Frost Nova",
+                "Freeze the opponent; they lose their next attack.",
+                self._frost_nova, cd=4,
+            ),
+            ability(
+                "⚡ Arcane Surge",
+                "Boost attack power by 12 — then pick a follow-up action.",
+                self._arcane_surge, cd=3,
+            ),
         ]
 
     def _fireball(self, opponent):
-        damage = self.attack_power * 2
-        self._deal_damage(opponent, damage)
+        """Hurl a fireball dealing 1.8× attack damage."""
+        self._deal_damage(opponent, int(self.attack_power * 1.8))
 
     def _frost_nova(self, opponent):
+        """Freeze the opponent so they skip their next turn."""
         opponent.status_effects[STATUS_FROZEN] = True
         slow_print(f"  ❄️  {opponent.name} is frozen and will skip their next turn!")
 
     def _arcane_surge(self, _opponent):
-        self.attack_power += self._surge_bonus
-        self._surge_active = True
+        """Temporarily boost attack power by 12 and enable a follow-up action."""
+        self.attack_power  += self._surge_bonus
+        self._surge_active  = True
         slow_print(
             f"  ⚡ Arcane Surge active! Your attack power is now {self.attack_power}.\n"
             f"  💡 Your NEXT attack or ability this turn hits at full surge power.\n"
             f"  ⚠️  The bonus expires automatically after the wizard's turn."
         )
 
-    def _blink(self, _opponent):
-        self.status_effects[STATUS_EVADE] = True
-        slow_print(f"  💨 {self.name} blinks away — next attack will miss!")
-
     def end_of_turn(self):
-        """Called by battle loop to expire surge."""
+        """Expire the Arcane Surge bonus at the end of the Mage's turn."""
         if self._surge_active:
-            self.attack_power -= self._surge_bonus
-            self._surge_active = False
+            self.attack_power  -= self._surge_bonus
+            self._surge_active  = False
 
     def wants_follow_up_after_ability(self, ability_index):
+        """Return True when Arcane Surge is active so the player gets a bonus action."""
         return self._surge_active and ability_index == 2
 
     def follow_up_action(self, opponent):
+        """Prompt the player to attack or pass as the surge follow-up."""
         slow_print("\n  ⚡ Surge is active — pick your follow-up action!")
-        follow = input("\n  Follow-up (1=Attack, skip=pass): ").strip()
-        if follow == "1":
+        if prompt_input("\n  Follow-up (1=Attack, skip=pass): ").strip() == "1":
             self.attack(opponent)
 
 
 class Archer(Character):
-    """
-    Archer — Swift ranged attacker.
-
-    Stats   : Balanced HP and attack; fastest character.
-    Flavor  : Excels at consistent damage and avoiding hits.
-
-    Abilities
-    ---------
-    1. Quick Shot     — Fire two arrows for 0.75× damage each (1.5× total).
-    2. Sniper Shot    — Charged shot ignores shield/evade; deals 1.8× damage.
-    3. Evade          — Dodge the next incoming attack.
-    4. Rain of Arrows — Volley dealing 2.5× damage (one use).
-    """
+    """Speed and range specialist with a guaranteed-dodge utility."""
 
     def __init__(self, name):
+        """Set up Archer stats and abilities."""
         super().__init__(name, health=120, attack_power=32, heal_power=18)
-        self._rain_used = False
         self.abilities = [
-            {
-                "name":         "🏹 Quick Shot",
-                "desc":         "Two fast arrows — each deals 0.75× damage.",
-                "method":       self._quick_shot,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🎯 Sniper Shot",
-                "desc":         "Bypasses all defenses for 1.8× damage.",
-                "method":       self._sniper_shot,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "💨 Evade",
-                "desc":         "Guarantee a dodge on the next attack aimed at you.",
-                "method":       self._evade,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌧️  Rain of Arrows",
-                "desc":         "Devastating volley (2.5×). One-time use.",
-                "method":       self._rain_of_arrows,
-                "max_cooldown": 0,
-                "cooldown":     0,
-            },
+            ability(
+                "🏹 Quick Shot",
+                "Two fast arrows — each deals 0.7× damage.",
+                self._quick_shot, cd=2,
+            ),
+            ability(
+                "🎯 Sniper Shot",
+                "Bypasses all defenses for 1.7× damage.",
+                self._sniper_shot, cd=2,
+            ),
+            ability(
+                "💨 Evade",
+                "Guarantee a dodge on the next attack aimed at you.",
+                self._evade, cd=3,
+            ),
         ]
 
     def _quick_shot(self, opponent):
+        """Fire two arrows, each dealing 0.7× damage."""
         for i in range(1, 3):
-            dmg = int(self.attack_power * 0.75)
             slow_print(f"  🏹 Arrow {i}:", delay=0.02)
-            self._deal_damage(opponent, dmg)
+            self._deal_damage(opponent, int(self.attack_power * 0.7))
 
     def _sniper_shot(self, opponent):
-        damage = int(self.attack_power * 1.8)
+        """Deal 1.7× damage that bypasses Evade and Shield."""
+        damage = int(self.attack_power * 1.7)
         opponent.health -= damage
-        slow_print(f"  🎯 Sniper Shot pierces defenses! {opponent.name} takes {damage} damage. "
-                   f"({opponent.health}/{opponent.max_health} HP)")
+        slow_print(
+            f"  🎯 Sniper Shot pierces defenses! {opponent.name} takes {damage} damage."
+            f" ({opponent.health}/{opponent.max_health} HP)"
+        )
         if opponent.health <= 0:
             slow_print(f"  ☠️  {opponent.name} has been defeated!")
 
     def _evade(self, _opponent):
+        """Set the Evade status so the next incoming attack is dodged."""
         self.status_effects[STATUS_EVADE] = True
         slow_print(f"  💨 {self.name} readies a dodge — next attack will miss!")
 
-    def _rain_of_arrows(self, opponent):
-        if self._rain_used:
-            slow_print("  ❌ Rain of Arrows has already been used!")
-            return
-        damage = int(self.attack_power * 2.5)
-        self._deal_damage(opponent, damage)
-        self._rain_used = True
-
 
 class Paladin(Character):
-    """
-    Paladin — Defensive holy warrior.
-
-    Stats   : High HP, moderate attack, strong heals.
-    Flavor  : Hard to kill. Balances offense with protection.
-
-    Abilities
-    ---------
-    1. Holy Strike    — Bonus holy damage (1.6×).
-    2. Divine Shield  — Block the next incoming attack entirely.
-    3. Consecration   — AoE holy ground; deals moderate damage + heals self 15.
-    4. Aura of Valor  — Permanently increase max_health by 30 and heal that amount.
-    """
+    """Holy defender with strong heals and a damage-absorbing shield."""
 
     def __init__(self, name):
-        super().__init__(name, health=150, attack_power=26, heal_power=28)
+        """Set up Paladin stats and abilities."""
+        super().__init__(name, health=150, attack_power=27, heal_power=28)
         self.abilities = [
-            {
-                "name":         "✝️  Holy Strike",
-                "desc":         "A blessed strike for 1.6× damage.",
-                "method":       self._holy_strike,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🛡️  Divine Shield",
-                "desc":         "Block the next attack aimed at you.",
-                "method":       self._divine_shield,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🔥 Consecration",
-                "desc":         "Deal moderate damage and heal yourself 15 HP.",
-                "method":       self._consecration,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "✨ Aura of Valor",
-                "desc":         "Permanently raise max HP by 30 and restore that HP.",
-                "method":       self._aura_of_valor,
-                "max_cooldown": 0,
-                "cooldown":     0,
-            },
+            ability(
+                "✝️  Holy Strike",
+                "A blessed strike for 1.5× damage.",
+                self._holy_strike, cd=2,
+            ),
+            ability(
+                "🛡️  Divine Shield",
+                "Block the next attack aimed at you.",
+                self._divine_shield, cd=3,
+            ),
+            ability(
+                "🔥 Consecration",
+                "Deal moderate damage and heal yourself 15 HP.",
+                self._consecration, cd=2,
+            ),
         ]
 
     def _holy_strike(self, opponent):
-        damage = int(self.attack_power * 1.6)
-        self._deal_damage(opponent, damage)
+        """Strike with holy power for 1.5× damage."""
+        self._deal_damage(opponent, int(self.attack_power * 1.5))
 
     def _divine_shield(self, _opponent):
+        """Raise a divine shield that absorbs the next incoming attack."""
         self.status_effects[STATUS_SHIELD] = True
         slow_print(f"  🛡️  {self.name} is shielded — the next attack will be absorbed!")
 
     def _consecration(self, opponent):
-        damage = int(self.attack_power * 0.9)
-        self._deal_damage(opponent, damage)
+        """Deal 0.9× damage and heal self for 15 HP."""
+        self._deal_damage(opponent, int(self.attack_power * 0.9))
         self.health = min(self.health + 15, self.max_health)
-        slow_print(f"  🔥 Holy ground heals {self.name} for 15. "
-                   f"HP: {self.health}/{self.max_health}")
-
-    def _aura_of_valor(self, _opponent):
-        self.max_health += 30
-        self.health = min(self.health + 30, self.max_health)
-        slow_print(f"  ✨ {self.name}'s Aura of Valor shines! Max HP → {self.max_health}. "
-                   f"HP: {self.health}/{self.max_health}")
+        slow_print(
+            f"  🔥 Holy ground heals {self.name} for 15."
+            f" HP: {self.health}/{self.max_health}"
+        )
 
 
 class DeathKnight(Character):
-    """
-    Death Knight — Dark plate warrior who weaponizes their own life force.
-
-    Stats   : Very high HP, high attack.
-    Flavor  : WoW-faithful DK: bleeds opponents, sacrifices own HP for power,
-              and raises fallen power from the dead.
-
-    Abilities
-    ---------
-    1. Death Coil      — Dark projectile that steals 20 HP from opponent.
-    2. Blood Boil      — Sacrifice 15 own HP to deal 2.5× damage (net gain if it lands).
-    3. Dark Pact       — Drain 25 HP from opponent directly into self.
-    4. Army of the Dead — One-time ability: summon a spectral strike for massive damage.
-    """
+    """Dark drainer who trades and steals HP to stay alive."""
 
     def __init__(self, name):
-        super().__init__(name, health=170, attack_power=34, heal_power=16)
-        self._army_used = False
+        """Set up DeathKnight stats and abilities."""
+        super().__init__(name, health=160, attack_power=31, heal_power=16)
         self.abilities = [
-            {
-                "name":         "💀 Death Coil",
-                "desc":         "Dark bolt that steals 20 HP from the opponent.",
-                "method":       self._death_coil,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🩸 Blood Boil",
-                "desc":         "Sacrifice 15 HP to unleash 2.5× damage.",
-                "method":       self._blood_boil,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌑 Dark Pact",
-                "desc":         "Drain 25 HP from opponent directly into your own pool.",
-                "method":       self._dark_pact,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "👻 Army of the Dead",
-                "desc":         "Unleash spectral warriors for massive damage (one-time).",
-                "method":       self._army_of_the_dead,
-                "max_cooldown": 0,
-                "cooldown":     0,
-            },
+            ability(
+                "💀 Death Coil",
+                "Dark bolt that steals 18 HP from the opponent.",
+                self._death_coil, cd=2,
+            ),
+            ability(
+                "🩸 Blood Boil",
+                "Sacrifice 18 HP to unleash 2.1× damage.",
+                self._blood_boil, cd=2,
+            ),
+            ability(
+                "🌑 Dark Pact",
+                "Drain 20 HP from opponent directly into your own pool.",
+                self._dark_pact, cd=3,
+            ),
         ]
 
     def _death_coil(self, opponent):
-        steal = 20
-        opponent_hp, self_hp = self._drain_life(opponent, steal)
-        slow_print(f"  💀 Death Coil drains {steal} HP from {opponent.name}! "
-                   f"{self.name} absorbs the life. HP: {self_hp}/{self.max_health}")
-        if opponent_hp <= 0:
+        """Steal 18 HP from the opponent and add it to self."""
+        opp_hp, self_hp = self._drain_life(opponent, 18)
+        slow_print(
+            f"  💀 Death Coil drains 18 HP from {opponent.name}!"
+            f" {self.name} absorbs the life. HP: {self_hp}/{self.max_health}"
+        )
+        if opp_hp <= 0:
             slow_print(f"  ☠️  {opponent.name} has been defeated!")
 
     def _blood_boil(self, opponent):
-        cost = 15
-        if self.health <= cost:
+        """Sacrifice 18 HP to deal 2.1× damage; blocked if HP is too low."""
+        if self.health <= 18:
             slow_print("  ❌ Not enough HP to sacrifice for Blood Boil!")
             return
-        self.health -= cost
-        slow_print(f"  🩸 {self.name} sacrifices {cost} HP... "
-                   f"HP: {self.health}/{self.max_health}")
-        damage = int(self.attack_power * 2.5)
-        self._deal_damage(opponent, damage)
+        self.health -= 18
+        slow_print(f"  🩸 {self.name} sacrifices 18 HP... HP: {self.health}/{self.max_health}")
+        self._deal_damage(opponent, int(self.attack_power * 2.1))
 
     def _dark_pact(self, opponent):
-        drain = 25
-        opponent_hp, self_hp = self._drain_life(opponent, drain)
-        slow_print(f"  🌑 Dark Pact! Drained {drain} HP from {opponent.name}. "
-                   f"{self.name} HP: {self_hp}/{self.max_health}")
-        if opponent_hp <= 0:
+        """Drain 20 HP directly from the opponent into self."""
+        opp_hp, self_hp = self._drain_life(opponent, 20)
+        slow_print(
+            f"  🌑 Dark Pact! Drained 20 HP from {opponent.name}."
+            f" {self.name} HP: {self_hp}/{self.max_health}"
+        )
+        if opp_hp <= 0:
             slow_print(f"  ☠️  {opponent.name} has been defeated!")
-
-    def _army_of_the_dead(self, opponent):
-        if self._army_used:
-            slow_print("  ❌ The dead have already answered the call.")
-            return
-        damage = self.attack_power * 3
-        slow_print("  👻 Spectral warriors rise from the grave!", delay=0.05)
-        pause(0.5)
-        self._deal_damage(opponent, damage)
-        self._army_used = True
 
 
 class HolyPriest(Character):
-    """
-    Holy Priest — Servant of the Light; the most resilient class in the game.
-
-    Lore    : Inspired by WoW's Holy Priest spec and themes of divine grace,
-              sacrifice, and restoration. Embodies God/Jesus/Light — heals
-              abundantly, protects with miracles, and smites evil with holy fire.
-
-    Stats   : Highest max HP, strong attack, massive healing.
-    Flavor  : Almost impossible to kill through sheer sustain. Wins long fights.
-
-    Abilities
-    ---------
-    1. Smite             — Holy bolt for 1.4× damage with bonus light damage.
-    2. Prayer of Healing — Restore 50 HP immediately.
-    3. Divine Hymn       — Powerful chant: heal 35 HP and reduce opponent ATK by 5.
-    4. Holy Nova         — Flash of holy light: deal 1.2× damage and heal self 20.
-    """
+    """Light-sustain healer who weakens opponents over time."""
 
     def __init__(self, name):
-        super().__init__(name, health=200, attack_power=32, heal_power=35)
+        """Set up HolyPriest stats and abilities."""
+        super().__init__(name, health=170, attack_power=29, heal_power=30)
         self.abilities = [
-            {
-                "name":         "✨ Smite",
-                "desc":         "Channel the Light for 1.4× holy damage.",
-                "method":       self._smite,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🙏 Prayer of Healing",
-                "desc":         "Restore 50 HP through divine grace.",
-                "method":       self._prayer_of_healing,
-                "max_cooldown": 3,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🎵 Divine Hymn",
-                "desc":         "Holy chant: heal 35 HP and weaken opponent's attack by 5.",
-                "method":       self._divine_hymn,
-                "max_cooldown": 3,
-                "cooldown":     0,
-            },
-            {
-                "name":         "💫 Holy Nova",
-                "desc":         "Burst of light: deal 1.2× damage and heal yourself 20 HP.",
-                "method":       self._holy_nova,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
+            ability(
+                "✨ Smite",
+                "Channel the Light for 1.25× holy damage.",
+                self._smite, cd=2,
+            ),
+            ability(
+                "🙏 Prayer of Healing",
+                "Restore 40 HP through divine grace.",
+                self._prayer_of_healing, cd=3,
+            ),
+            ability(
+                "🎵 Divine Hymn",
+                "Holy chant: heal 25 HP and weaken opponent's attack by 4.",
+                self._divine_hymn, cd=4,
+            ),
         ]
 
     def _smite(self, opponent):
-        damage = int(self.attack_power * 1.4) + 10
-        self._deal_damage(opponent, damage)
+        """Channel the Light for 1.25× damage plus a flat 6 bonus."""
+        self._deal_damage(opponent, int(self.attack_power * 1.25) + 6)
 
     def _prayer_of_healing(self, _opponent):
+        """Restore up to 40 HP through divine prayer."""
         before = self.health
-        self.health = min(self.health + 50, self.max_health)
-        restored = self.health - before
-        slow_print(f"  🙏 {self.name} prays... restored {restored} HP. "
-                   f"HP: {self.health}/{self.max_health}")
+        self.health = min(self.health + 40, self.max_health)
+        slow_print(
+            f"  🙏 {self.name} prays... restored {self.health - before} HP."
+            f" HP: {self.health}/{self.max_health}"
+        )
 
     def _divine_hymn(self, opponent):
+        """Heal 25 HP and permanently reduce the opponent's attack power by 4."""
         before = self.health
-        self.health = min(self.health + 35, self.max_health)
-        restored = self.health - before
-        opponent.attack_power = max(0, opponent.attack_power - 5)
-        slow_print(f"  🎵 Divine Hymn resonates! {self.name} healed {restored} HP. "
-                   f"{opponent.name}'s attack weakened to {opponent.attack_power}.")
-
-    def _holy_nova(self, opponent):
-        damage = int(self.attack_power * 1.2)
-        self._deal_damage(opponent, damage)
-        before = self.health
-        self.health = min(self.health + 20, self.max_health)
-        slow_print(f"  💫 Holy Nova heals {self.name} for {self.health - before} HP. "
-                   f"HP: {self.health}/{self.max_health}")
+        self.health = min(self.health + 25, self.max_health)
+        opponent.attack_power = max(0, opponent.attack_power - 4)
+        slow_print(
+            f"  🎵 Divine Hymn resonates! {self.name} healed {self.health - before} HP."
+            f" {opponent.name}'s attack weakened to {opponent.attack_power}."
+        )
 
 
 class Rogue(Character):
-    """
-    Rogue — Stealthy assassin who strikes fast and vanishes.
-
-    Stats   : Moderate HP, high attack, strongest single-hit burst.
-    Flavor  : Feast-or-famine. Can one-shot chunk the wizard or waste a turn.
-
-    Abilities
-    ---------
-    1. Backstab    — High-risk, high-reward: 60 % chance of 3× damage, 40 % miss.
-    2. Smoke Bomb  — Evade the next attack AND blind the opponent.
-    3. Poison Blade — Apply poison: opponent takes 10 damage next wizard turn.
-    4. Shadow Step  — Teleport behind enemy; guaranteed 2× damage ignoring shield.
-    """
+    """Assassin with high-risk burst, poison, and smoke utility."""
 
     def __init__(self, name):
-        super().__init__(name, health=115, attack_power=36, heal_power=15)
+        """Set up Rogue stats and abilities."""
+        super().__init__(name, health=120, attack_power=34, heal_power=15)
         self.abilities = [
-            {
-                "name":         "🗡️  Backstab",
-                "desc":         "60 % chance of 3× damage. Miss on 40 %.",
-                "method":       self._backstab,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "💨 Smoke Bomb",
-                "desc":         "Evade next attack and reduce opponent precision.",
-                "method":       self._smoke_bomb,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "☠️  Poison Blade",
-                "desc":         "Coat your blade — opponent takes 10 damage next turn.",
-                "method":       self._poison_blade,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌑 Shadow Step",
-                "desc":         "Bypass shields; deal guaranteed 2× damage.",
-                "method":       self._shadow_step,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
+            ability(
+                "🗡️  Backstab",
+                "60 % chance of 3× damage. Miss on 40 %.",
+                self._backstab, cd=2,
+            ),
+            ability(
+                "💨 Smoke Bomb",
+                "Evade next attack and reduce opponent precision.",
+                self._smoke_bomb, cd=3,
+            ),
+            ability(
+                "☠️  Poison Blade",
+                "Coat your blade — opponent takes 12 damage next turn.",
+                self._poison_blade, cd=2,
+            ),
         ]
 
     def _backstab(self, opponent):
-        if random.random() < 0.6:
-            damage = self.attack_power * 3
+        """65 % chance to deal 2.6× damage; otherwise miss entirely."""
+        if random.random() < 0.65:
             slow_print("  🗡️  Critical backstab!", delay=0.05)
             pause(0.3)
-            self._deal_damage(opponent, damage)
+            self._deal_damage(opponent, int(self.attack_power * 2.6))
         else:
             slow_print(f"  ❌ {self.name} missed! The opponent sidesteps.")
 
     def _smoke_bomb(self, opponent):
-        self.status_effects[STATUS_EVADE] = True
+        """Grant self Evade and apply Blinded to the opponent."""
+        self.status_effects[STATUS_EVADE]       = True
         opponent.status_effects[STATUS_BLINDED] = True
-        slow_print(f"  💨 Smoke fills the air! {self.name} will evade the next attack. "
-                   f"{opponent.name} is blinded (50 % miss next turn).")
+        slow_print(
+            f"  💨 Smoke fills the air! {self.name} will evade the next attack."
+            f" {opponent.name} is blinded (50 % miss next turn)."
+        )
 
     def _poison_blade(self, opponent):
+        """Apply Poisoned to the opponent; deals 12 damage at start of their next turn."""
         opponent.status_effects[STATUS_POISONED] = True
-        slow_print(f"  ☠️  {opponent.name} is poisoned! Takes 10 damage at the start of "
-                   "the next wizard action.")
-
-    def _shadow_step(self, opponent):
-        damage = self.attack_power * 2
-        opponent.health -= damage
-        slow_print(f"  🌑 {self.name} shadow-steps! Deals {damage} damage, ignoring shields.")
-        if opponent.health <= 0:
-            slow_print(f"  ☠️  {opponent.name} has been defeated!")
+        slow_print(
+            f"  ☠️  {opponent.name} is poisoned!"
+            " Takes 12 damage at the start of the next wizard action."
+        )
 
 
 class Druid(Character):
-    """
-    Druid — Shape-shifting guardian of nature.
-
-    Stats   : Moderate HP and attack; strong self-sustain.
-    Flavor  : Flexible support-attacker. Can swap between forms each turn.
-
-    Abilities
-    ---------
-    1. Wrath     — Nature bolt for 1.5× damage.
-    2. Bear Form — Transform: gain 30 temporary HP and block the next hit.
-    3. Regrowth  — Heal-over-time: restore 25 HP now and 15 next turn.
-    4. Moonfire  — Mark opponent: they take 8 bonus damage every time they attack.
-    """
+    """Nature shaman with a delayed heal-over-time and a bear form."""
 
     def __init__(self, name):
-        super().__init__(name, health=130, attack_power=28, heal_power=25)
-        self._regrowth_tick      = False
-        self._moonfire_applied   = False
+        """Set up Druid stats and abilities."""
+        super().__init__(name, health=130, attack_power=30, heal_power=25)
+        self._regrowth_tick = False
         self.abilities = [
-            {
-                "name":         "⚡ Wrath",
-                "desc":         "Call down nature's fury for 1.5× damage.",
-                "method":       self._wrath,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🐻 Bear Form",
-                "desc":         "Hulk out: +30 temp HP and shield the next attack.",
-                "method":       self._bear_form,
-                "max_cooldown": 3,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌿 Regrowth",
-                "desc":         "Heal 25 now; automatically heal 15 more next turn.",
-                "method":       self._regrowth,
-                "max_cooldown": 2,
-                "cooldown":     0,
-            },
-            {
-                "name":         "🌙 Moonfire",
-                "desc":         "Mark opponent — they take 8 extra damage each time they attack.",
-                "method":       self._moonfire,
-                "max_cooldown": 0,
-                "cooldown":     0,
-            },
+            ability(
+                "⚡ Wrath",
+                "Call down nature's fury for 1.5× damage.",
+                self._wrath, cd=2,
+            ),
+            ability(
+                "🐻 Bear Form",
+                "Hulk out: +24 temp HP and shield the next attack.",
+                self._bear_form, cd=3,
+            ),
+            ability(
+                "🌿 Regrowth",
+                "Heal 20 now; automatically heal 12 more next turn.",
+                self._regrowth, cd=2,
+            ),
         ]
 
     def _wrath(self, opponent):
-        damage = int(self.attack_power * 1.5)
-        self._deal_damage(opponent, damage)
+        """Call nature's fury for 1.5× damage."""
+        self._deal_damage(opponent, int(self.attack_power * 1.5))
 
     def _bear_form(self, _opponent):
-        self.health = min(self.health + 30, self.max_health + 30)
+        """Gain 24 temporary HP and shield the next incoming attack."""
+        self.health = min(self.health + 24, self.max_health + 24)
         self.status_effects[STATUS_SHIELD] = True
-        slow_print(f"  🐻 {self.name} transforms into a bear! +30 HP (now {self.health}) "
-                   "and next hit blocked.")
+        slow_print(
+            f"  🐻 {self.name} transforms into a bear!"
+            f" +24 HP (now {self.health}) and next hit blocked."
+        )
 
     def _regrowth(self, _opponent):
-        self.health = min(self.health + 25, self.max_health)
+        """Heal 20 HP now and queue a 12 HP tick for the start of the next turn."""
+        self.health = min(self.health + 20, self.max_health)
         self._regrowth_tick = True
-        slow_print(f"  🌿 Regrowth blooms! {self.name} healed 25 HP. "
-                   f"Another 15 HP will restore next turn. HP: {self.health}/{self.max_health}")
-
-    def _moonfire(self, opponent):
-        if not self._moonfire_applied:
-            opponent.status_effects[STATUS_MOONFIRE] = True
-            self._moonfire_applied = True
-            slow_print(f"  🌙 Moonfire sears {opponent.name}! They take 8 bonus damage "
-                       "when they attack.")
-        else:
-            slow_print(f"  ❌ Moonfire is already burning on {opponent.name}!")
+        slow_print(
+            f"  🌿 Regrowth blooms! {self.name} healed 20 HP."
+            f" Another 12 HP will restore next turn. HP: {self.health}/{self.max_health}"
+        )
 
     def start_of_turn(self):
-        """Apply regrowth tick if active — called by battle loop."""
+        """Apply the queued Regrowth tick at the start of the Druid's turn."""
         if self._regrowth_tick:
-            self.health = min(self.health + 15, self.max_health)
-            slow_print(f"  🌿 Regrowth heals {self.name} for 15 HP. "
-                       f"HP: {self.health}/{self.max_health}")
+            self.health = min(self.health + 12, self.max_health)
+            slow_print(
+                f"  🌿 Regrowth heals {self.name} for 12 HP."
+                f" HP: {self.health}/{self.max_health}"
+            )
             self._regrowth_tick = False
 
 
 # ─────────────────────────────────────────────
-#  EVIL WIZARD (ENHANCED)
+#  BASE BOSS
 # ─────────────────────────────────────────────
 
-class EvilWizard(Character):
-    """
-    EvilWizard — The final boss.
+class Boss(Character):
+    """Shared logic for all boss types: regen, poison tick, and direct hit."""
 
-    Enhancements
-    ------------
-    - Regenerates 3 HP per turn.
-    - At 50 % HP, becomes Enraged (+5 ATK, announced once).
-    - At 25 % HP, casts 'Void Surge' once for triple damage.
-    - Against HolyPriest: applies Dark Suppression (halves healing, +10 chip damage/turn).
-    - Taunts the player each turn.
-    """
+    _regen_per_turn = 0
 
-    def __init__(self, name):
-        super().__init__(name, health=200, attack_power=20, heal_power=5)
+    def regenerate(self, emoji="💜"):
+        """Restore a fixed amount of HP at the start of each boss turn."""
+        self.health = min(self.health + self._regen_per_turn, self.max_health)
+        slow_print(
+            f"  {emoji} {self.name} regenerates {self._regen_per_turn} HP."
+            f" HP: {self.health}/{self.max_health}"
+        )
+
+    def _tick_statuses(self):
+        """Resolve any active status effects on this boss before it acts."""
+        if self.status_effects.get(STATUS_POISONED):
+            self.health -= 12
+            slow_print(
+                f"  ☠️  Poison deals 12 damage to {self.name}!"
+                f" HP: {self.health}/{self.max_health}"
+            )
+            self.status_effects[STATUS_POISONED] = False
+
+    def _hit_player(self, player, damage):
+        """Apply damage directly to the player, bypassing the standard attack roll."""
+        if player.try_negate_incoming_attack(self.name):
+            return
+        player.health -= damage
+        slow_print(
+            f"  💥 {player.name} takes {damage} damage!"
+            f" HP: {player.health}/{player.max_health}"
+        )
+        if player.health <= 0:
+            slow_print(f"  ☠️  {player.name} has been defeated!")
+
+
+# ─────────────────────────────────────────────
+#  BOSS CLASSES
+# ─────────────────────────────────────────────
+
+class EvilWizard(Boss):
+    """Regenerating spellcaster with suppression, enrage, and void burst."""
+
+    def __init__(self, name, difficulty="normal"):
+        """Set up EvilWizard stats scaled to the chosen difficulty."""
+        health                  = 200
+        attack                  = 20
+        self._regen_per_turn    = 3
+        self._dark_bonus_damage = 10
+        if difficulty == "challenging":
+            health                  = 210
+            attack                  = 21
+            self._regen_per_turn    = 3
+            self._dark_bonus_damage = 11
+        super().__init__(name, health=health, attack_power=attack, heal_power=5)
+        self.difficulty = difficulty
         self._enraged   = False
         self._void_used = False
 
-    def regenerate(self):
-        """Regenerate 3 HP (does not exceed max)."""
-        self.health = min(self.health + 3, self.max_health)
-        slow_print(f"  🧙 {self.name} regenerates 3 HP. HP: {self.health}/{self.max_health}")
-
-    def wizard_action(self, player):
-        """
-        Choose wizard's attack based on HP thresholds.
-        If the player is a HolyPriest, applies Dark Suppression.
-        Also taunts the player each turn.
-        """
-        # Tick statuses on wizard before acting
+    def take_turn(self, player):
+        """Regenerate, tick statuses, then execute the wizard's combat action."""
+        self.regenerate(emoji="🧙")
         self._tick_statuses()
 
         if self.should_skip_turn_from_control():
             return
 
-        # Random taunt
         slow_print(f"\n  🧙 {self.name}: \"{random.choice(WIZARD_TAUNTS)}\"", delay=0.04)
         pause(0.4)
 
-        # Enrage at 50 %
-        if not self._enraged and self.health <= self.max_health * 0.5:
-            self._enraged = True
+        if not self._enraged and self.health <= self.max_health * 0.4:
+            self._enraged      = True
             self.attack_power += 5
             slow_print(
-                f"\n  ⚡ {self.name} becomes ENRAGED! Attack power → {self.attack_power}!",
-                delay=0.05)
+                f"\n  ⚡ {self.name} becomes ENRAGED!"
+                f" Attack power → {self.attack_power}!",
+                delay=0.05,
+            )
             pause(0.4)
 
-        # Dark Suppression — activates only against a HolyPriest
         if isinstance(player, HolyPriest):
             if not player.status_effects.get(STATUS_DARK_SUPPRESSED):
                 player.status_effects[STATUS_DARK_SUPPRESSED] = True
                 player.heal_power = player.heal_power // 2
-                slow_print(f"\n  🌑 {self.name} senses the Light within {player.name} "
-                           "and unleashes DARK SUPPRESSION! Her healing is halved!", delay=0.05)
+                slow_print(
+                    f"\n  🌑 {self.name} senses the Light within {player.name}"
+                    " and unleashes DARK SUPPRESSION! Her healing is halved!",
+                    delay=0.05,
+                )
                 pause(0.4)
-            bonus = 10
-            slow_print(f"  🌑 Dark energy sears {player.name} for {bonus} bonus damage!")
-            player.health -= bonus
+            player.health -= self._dark_bonus_damage
+            slow_print(
+                f"  🌑 Dark energy sears {player.name}"
+                f" for {self._dark_bonus_damage} bonus damage!"
+            )
             if player.health <= 0:
                 slow_print(f"  ☠️  {player.name} has been defeated!")
                 return
 
-        # Void Surge once at 25 %
-        if not self._void_used and self.health <= self.max_health * 0.25:
+        if not self._void_used and self.health <= self.max_health * 0.2:
             self._void_used = True
-            damage = self.attack_power * 3
             slow_print(f"\n  🌑 {self.name} channels VOID SURGE!", delay=0.05)
             pause(0.5)
-            self._hit_player(player, damage)
+            self._hit_player(player, self.attack_power * 2)
             return
 
-        # Shadow Bolt at ≤ 50 %
-        if self.health <= self.max_health * 0.5:
-            damage = self.attack_power * 2
+        if self.health <= self.max_health * 0.4:
             slow_print(f"\n  💜 {self.name} hurls a SHADOW BOLT!", delay=0.05)
             pause(0.3)
-            self._hit_player(player, damage)
+            self._hit_player(player, self.attack_power * 2)
         else:
             self.attack(player)
 
-    def _hit_player(self, player, damage):
-        """Deal exact damage to player (respects shield/evade)."""
-        if player.try_negate_incoming_attack(self.name):
-            return
-        player.health -= damage
-        slow_print(f"  💥 {player.name} takes {damage} damage! "
-                   f"HP: {player.health}/{player.max_health}")
-        if player.health <= 0:
-            slow_print(f"  ☠️  {player.name} has been defeated!")
 
-    def _tick_statuses(self):
-        """Apply any status effects on the wizard at the start of its turn."""
-        if self.status_effects.get(STATUS_POISONED):
-            self.health -= 10
-            slow_print(f"  ☠️  Poison deals 10 damage to {self.name}! "
-                       f"HP: {self.health}/{self.max_health}")
-            self.status_effects[STATUS_POISONED] = False
+class AncientDragon(Boss):
+    """Relentless bruiser with fury cycles, aura damage, and inferno breath."""
 
-    def take_turn(self, player):
-        """Boss turn entry point used by the battle loop."""
-        self.regenerate()
-        self.wizard_action(player)
-
-
-class AncientDragon(Character):
-    """
-    Ancient Dragon — Alternative final boss.
-
-    Style
-    -----
-    - Constant pressure: chip damage aura every turn.
-    - Fury cycle: every 3rd turn unleashes heavy tail slam.
-    - Low-health spike: one-time inferno breath.
-    """
-
-    def __init__(self, name):
-        super().__init__(name, health=220, attack_power=18, heal_power=0)
-        self._enraged = False
+    def __init__(self, name, difficulty="normal"):
+        """Set up AncientDragon stats scaled to the chosen difficulty."""
+        health                    = 210
+        attack                    = 17
+        self._regen_per_turn      = 2
+        self._aura_damage         = 5
+        self._priest_aura_damage  = 3
+        self._inferno_mult        = 2.8
+        self._priest_inferno_mult = 2.2
+        self._tail_slam_mult      = 1.9
+        if difficulty == "challenging":
+            health                    = 210
+            attack                    = 17
+            self._regen_per_turn      = 2
+            self._aura_damage         = 5
+            self._priest_aura_damage  = 3
+            self._inferno_mult        = 2.5
+            self._priest_inferno_mult = 2.0
+            self._tail_slam_mult      = 2.0
+        super().__init__(name, health=health, attack_power=attack, heal_power=0)
+        self.difficulty    = difficulty
+        self._enraged      = False
         self._inferno_used = False
-        self._fury = 0
-
-    def regenerate(self):
-        """Regenerate 2 HP each turn."""
-        self.health = min(self.health + 2, self.max_health)
-        slow_print(f"  🐉 {self.name} hardens its scales and regenerates 2 HP. "
-                   f"HP: {self.health}/{self.max_health}")
-
-    def _hit_player(self, player, damage):
-        """Deal exact damage to player (respects shield/evade)."""
-        if player.try_negate_incoming_attack(self.name):
-            return
-        player.health -= damage
-        slow_print(f"  💥 {player.name} takes {damage} damage! "
-                   f"HP: {player.health}/{player.max_health}")
-        if player.health <= 0:
-            slow_print(f"  ☠️  {player.name} has been defeated!")
-
-    def _tick_statuses(self):
-        """Apply any status effects on the dragon at the start of its turn."""
-        if self.status_effects.get(STATUS_POISONED):
-            self.health -= 10
-            slow_print(f"  ☠️  Poison deals 10 damage to {self.name}! "
-                       f"HP: {self.health}/{self.max_health}")
-            self.status_effects[STATUS_POISONED] = False
+        self._fury         = 0
 
     def take_turn(self, player):
-        """Boss turn entry point used by the battle loop."""
+        """Tick statuses, regenerate, then execute the dragon's combat pattern."""
         self._tick_statuses()
         if self.health <= 0:
             return
 
-        self.regenerate()
+        self.regenerate(emoji="🐉")
         if self.should_skip_turn_from_control():
             return
 
         slow_print(f"\n  🐉 {self.name}: \"{random.choice(DRAGON_TAUNTS)}\"", delay=0.04)
         pause(0.4)
 
-        if not self._enraged and self.health <= self.max_health * 0.5:
-            self._enraged = True
+        if not self._enraged and self.health <= self.max_health * 0.4:
+            self._enraged      = True
             self.attack_power += 6
-            slow_print(f"\n  🔥 {self.name} enters RAMPAGE! Attack power → {self.attack_power}!",
-                      delay=0.05)
+            slow_print(
+                f"\n  🔥 {self.name} enters RAMPAGE!"
+                f" Attack power → {self.attack_power}!",
+                delay=0.05,
+            )
             pause(0.4)
 
-        # Passive pressure each dragon turn.
-        aura = 6
+        aura = self._priest_aura_damage if isinstance(player, HolyPriest) \
+               else self._aura_damage
         player.health -= aura
         slow_print(f"  🌋 Scorching aura burns {player.name} for {aura} damage!")
         if player.health <= 0:
@@ -1225,48 +901,48 @@ class AncientDragon(Character):
 
         self._fury += 1
 
-        # One-time execute pattern when low.
-        if not self._inferno_used and self.health <= self.max_health * 0.3:
+        if not self._inferno_used and self.health <= self.max_health * 0.2:
             self._inferno_used = True
-            damage = int(self.attack_power * 2.8)
+            mult = self._priest_inferno_mult if isinstance(player, HolyPriest) \
+                   else self._inferno_mult
             slow_print("\n  🔥 INFERNO BREATH engulfs the battlefield!", delay=0.05)
             pause(0.5)
-            self._hit_player(player, damage)
+            self._hit_player(player, int(self.attack_power * mult))
             return
 
-        # Fury spender every third dragon turn.
         if self._fury >= 3:
             self._fury = 0
-            damage = int(self.attack_power * 2.1)
             slow_print("\n  🐲 Tail Slam crashes down with crushing force!", delay=0.05)
             pause(0.3)
-            self._hit_player(player, damage)
+            self._hit_player(player, int(self.attack_power * self._tail_slam_mult))
             return
 
-        # Default pattern: two claw swipes.
         slow_print("  🐾 The dragon lashes out with twin claw swipes!")
         for _ in range(2):
             if player.health <= 0:
                 return
-            damage = random.randint(int(self.attack_power * 0.6), int(self.attack_power * 0.9))
+            damage = random.randint(
+                int(self.attack_power * 0.6),
+                int(self.attack_power * 0.9),
+            )
             self._hit_player(player, damage)
 
 
 # ─────────────────────────────────────────────
-#  GAME FUNCTIONS
+#  GAME DATA
 # ─────────────────────────────────────────────
 
-# Map of all available classes
-CHARACTER_CLASSES = {
-    "1": ("Warrior",      Warrior),
-    "2": ("Mage",         Mage),
-    "3": ("Archer",       Archer),
-    "4": ("Paladin",      Paladin),
-    "5": ("Death Knight", DeathKnight),
-    "6": ("Holy Priest",  HolyPriest),
-    "7": ("Rogue",        Rogue),
-    "8": ("Druid",        Druid),
-}
+# (display_name, hp, atk, role, emoji, class_obj)
+HERO_REGISTRY = [
+    ("Warrior",      160, 26, "Tank & sustain",  "⚔️",  Warrior),
+    ("Mage",         105, 38, "Glass cannon",    "🔮",  Mage),
+    ("Archer",       120, 32, "Speed & range",   "🏹",  Archer),
+    ("Paladin",      150, 27, "Holy defender",   "🛡️",  Paladin),
+    ("Death Knight", 160, 31, "Dark drainer",    "💀",  DeathKnight),
+    ("Holy Priest",  170, 29, "Light sustain",   "✨",  HolyPriest),
+    ("Rogue",        120, 34, "Assassin burst",  "🗡️",  Rogue),
+    ("Druid",        130, 30, "Nature shaman",   "🌿",  Druid),
+]
 
 BOSS_OPTIONS = {
     "1": (
@@ -1284,116 +960,124 @@ BOSS_OPTIONS = {
 }
 
 BETWEEN_BOSS_HEAL_RATIO = 0.35
+GAME_MODES       = {"": "single",  "1": "single",  "2": "gauntlet"}
+DIFFICULTY_MODES = {"": "normal",  "1": "normal",  "2": "challenging"}
+
+
+# ─────────────────────────────────────────────
+#  GAME FUNCTIONS
+# ─────────────────────────────────────────────
+
+def choose_game_mode():
+    """Display the game-mode menu and return the player's choice."""
+    print("\n" + "═" * 50)
+    slow_print("  🧭   CHOOSE GAME MODE   🧭", delay=0.04)
+    print("═" * 50)
+    print("  1. Single Boss (recommended)")
+    print("     Classic run: one hero vs one boss.")
+    print("  2. Gauntlet Challenge")
+    print("     Defeat one boss, then face the second with partial healing.")
+    print("═" * 50)
+    while True:
+        choice = prompt_input("Choose mode (Enter=1, 1-2): ").strip()
+        if choice in GAME_MODES:
+            return GAME_MODES[choice]
+        print("  ❌ Invalid choice — enter 1 or 2.")
+
+
+def choose_difficulty():
+    """Display the difficulty menu and return the player's choice."""
+    print("\n" + "═" * 50)
+    slow_print("  🎚️   CHOOSE DIFFICULTY   🎚️", delay=0.04)
+    print("═" * 50)
+    print("  1. Normal (recommended)")
+    print("     More forgiving boss values and priest-friendly dragon tuning.")
+    print("  2. Challenging")
+    print("     Harder bosses with higher damage and stronger pressure.")
+    print("═" * 50)
+    while True:
+        choice = prompt_input("Choose difficulty (Enter=1, 1-2): ").strip()
+        if choice in DIFFICULTY_MODES:
+            return DIFFICULTY_MODES[choice]
+        print("  ❌ Invalid choice — enter 1 or 2.")
 
 
 def create_character():
-    """
-    Display class selection menu and return a new player character instance.
-
-    Returns
-    -------
-    Character subclass instance
-    """
+    """Display the hero-selection menu, prompt for a name, and return a new player."""
     print("\n" + "═" * 50)
     slow_print("  ⚔️   CHOOSE YOUR HERO   ⚔️", delay=0.04)
     print("═" * 50)
-
-    # Emoji width is unpredictable across terminals/fonts, so we keep the
-    # columns that must align (name, HP, ATK) emoji-free, and show the
-    # emoji at the end where any width difference doesn't matter.
-    descriptions = [
-        ("Warrior",      160, 28, "Tank & sustain",  "⚔️"),
-        ("Mage",         100, 40, "Glass cannon",    "🔮"),
-        ("Archer",       120, 32, "Speed & range",   "🏹"),
-        ("Paladin",      150, 26, "Holy defender",   "🛡️"),
-        ("Death Knight", 170, 34, "Dark drainer",    "💀"),
-        ("Holy Priest",  200, 32, "Most resilient",  "✨"),
-        ("Rogue",        115, 36, "Assassin burst",  "🗡️"),
-        ("Druid",        130, 28, "Nature shaman",   "🌿"),
-    ]
-
-    for i, (cname, hp, atk, role, emoji) in enumerate(descriptions, start=1):
+    for i, (cname, hp, atk, role, emoji, _cls) in enumerate(HERO_REGISTRY, start=1):
         print(f"  {i}. {cname:<13}| HP: {hp:<4}| ATK: {atk:<3}| {role:<16} {emoji}")
-
     print("═" * 50)
 
+    valid_choices = {str(i) for i in range(1, len(HERO_REGISTRY) + 1)}
     while True:
-        choice = input("Enter the number of your class: ").strip()
-        if choice in CHARACTER_CLASSES:
+        choice = prompt_input("Enter the number of your class: ").strip()
+        if choice in valid_choices:
             break
-        print("  ❌ Invalid choice — enter a number between 1 and 8.")
+        print(f"  ❌ Invalid choice — enter a number between 1 and {len(HERO_REGISTRY)}.")
 
-    name = input("Enter your character's name: ").strip() or "Hero"
-    _, cls = CHARACTER_CLASSES[choice]
+    _cname, _hp, _atk, _role, _emoji, cls = HERO_REGISTRY[int(choice) - 1]
+    name   = prompt_input("Enter your character's name: ").strip() or "Hero"
     player = cls(name)
-
     pause(0.3)
     intro = CLASS_INTROS.get(cls.__name__, f'  "{name}" steps forward.')
     slow_print("\n  " + intro.replace("{name}", name), delay=0.04)
     pause(0.6)
-
     return player
 
 
-def choose_boss():
-    """Display boss selection menu and return a boss instance."""
+def choose_boss(difficulty="normal"):
+    """Display the boss-selection menu and return a new boss instance."""
     print("\n" + "═" * 50)
     slow_print("  ☠️   CHOOSE YOUR FOE   ☠️", delay=0.04)
     print("═" * 50)
-
     for key, (name, style, _cls, emoji) in BOSS_OPTIONS.items():
         print(f"  {key}. {name:<24} {emoji}")
         print(f"     {style}")
-
     print("═" * 50)
-
     while True:
-        choice = input("Choose your boss (1-2): ").strip()
+        choice = prompt_input("Choose your boss (1-2): ").strip()
         if choice in BOSS_OPTIONS:
             break
         print("  ❌ Invalid choice — enter 1 or 2.")
-
     name, _style, cls, _emoji = BOSS_OPTIONS[choice]
-    return cls(name)
+    return cls(name, difficulty=difficulty)
 
 
 def _remaining_boss_option(current_boss):
-    """Return the remaining boss option tuple after current_boss, or None."""
+    """Return the BOSS_OPTIONS entry for whichever boss was not chosen, or None."""
     for name, style, cls, emoji in BOSS_OPTIONS.values():
-        if cls is not type(current_boss):
+        if not isinstance(current_boss, cls):
             return name, style, cls, emoji
     return None
 
 
 def _between_boss_heal(player):
-    """Restore a partial amount of HP between boss fights (not full)."""
-    heal_amount = max(1, int(player.max_health * BETWEEN_BOSS_HEAL_RATIO))
-    before = player.health
+    """Restore 35 % of max HP between gauntlet fights and print a respite message."""
+    heal_amount   = max(1, int(player.max_health * BETWEEN_BOSS_HEAL_RATIO))
+    before        = player.health
     player.health = min(player.health + heal_amount, player.max_health)
-    restored = player.health - before
     print("\n" + "═" * 50)
     slow_print("  🕊️  Brief respite between battles...", delay=0.04)
-    slow_print(f"  💚 {player.name} recovers {restored} HP "
-               f"({player.health}/{player.max_health}).", delay=0.04)
+    slow_print(
+        f"  💚 {player.name} recovers {player.health - before} HP"
+        f" ({player.health}/{player.max_health}).",
+        delay=0.04,
+    )
     print("═" * 50)
 
 
 def _show_ability_menu(player):
-    """
-    Print the player's ability list with cooldown status and return their
-    chosen index (0-based), or -1 if they cancel.
-    """
+    """Print the ability list and return the chosen 0-based index, or -1 to cancel."""
     print("\n  ✨ Choose an ability:")
-    for i, ability in enumerate(player.abilities, start=1):
-        cd = ability.get("cooldown", 0)
-        if cd > 0:
-            status = f"  ⏳ {cd} turn(s)"
-        else:
-            status = "  ✅ Ready"
-        print(f"    {i}. {ability['name']}{status} — {ability['desc']}")
+    for i, ab in enumerate(player.abilities, start=1):
+        cd     = ab.get("cooldown", 0)
+        status = f"  ⏳ {cd} turn(s)" if cd > 0 else "  ✅ Ready"
+        print(f"    {i}. {ab['name']}{status} — {ab['desc']}")
     print("    0. Cancel")
-
-    raw = input("  Ability number: ").strip()
+    raw = prompt_input("  Ability number: ").strip()
     if raw == "0" or not raw.isdigit():
         return -1
     idx = int(raw) - 1
@@ -1403,22 +1087,24 @@ def _show_ability_menu(player):
     return idx
 
 
+def _print_run_summary(mode, difficulty, first_boss, remaining_option=None):
+    """Print a summary of the chosen mode, difficulty, and boss order."""
+    mode_label       = "Single Boss"  if mode == "single"     else "Gauntlet Challenge"
+    difficulty_label = "Normal"       if difficulty == "normal" else "Challenging"
+    print("\n" + "═" * 50)
+    slow_print("  🧾   RUN SETTINGS   🧾", delay=0.03)
+    print("═" * 50)
+    print(f"  Mode      : {mode_label}")
+    print(f"  Difficulty: {difficulty_label}")
+    print(f"  First Boss: {first_boss.name}")
+    if remaining_option is not None:
+        print(f"  Next Boss : {remaining_option[0]}")
+    print("═" * 50)
+    pause(0.4)
+
+
 def battle(player, boss, final_boss=True):
-    """
-    Main turn-based battle loop.
-
-    Each iteration:
-      1. HP bars are displayed.
-      2. Player chooses an action.
-      3. Wizard regenerates, taunts, then acts (if still alive).
-      4. DOT / tick effects fire at appropriate times.
-
-    Parameters
-    ----------
-    player : Character subclass instance
-    boss : Character boss instance
-    final_boss : bool -- whether this is the final encounter of the run
-    """
+    """Run a single combat loop between player and boss; return True if player wins."""
     pause(0.5)
     boss_emoji = CLASS_EMOJI.get(type(boss).__name__, "👹")
     slow_print(f"\n  {boss_emoji} {boss.name} appears from the shadows...", delay=0.05)
@@ -1429,17 +1115,12 @@ def battle(player, boss, final_boss=True):
     turn = 0
     while boss.health > 0 and player.health > 0:
         turn += 1
-
-        # ── Turn header with HP bars ──────────────────────────────────
         print(f"\n{'═' * 50}")
         slow_print(f"  ⚔️   TURN {turn}   ⚔️", delay=0.03)
         print(f"{'═' * 50}")
         print_hp_bars(player, boss)
-
-        # Class hook for start-of-turn effects
         player.start_of_turn()
 
-        # ── Player's action ───────────────────────────────────────────
         print(f"\n  🎮 Your turn, {player.name}:")
         print("  1. ⚔️  Attack")
         print("  2. ✨ Use Special Ability")
@@ -1448,12 +1129,10 @@ def battle(player, boss, final_boss=True):
 
         valid = False
         while not valid:
-            choice = input("\n  Action: ").strip()
-
+            choice = prompt_input("\n  Action: ").strip()
             if choice == "1":
                 player.attack(boss)
                 valid = True
-
             elif choice == "2":
                 idx = _show_ability_menu(player)
                 if idx >= 0:
@@ -1463,26 +1142,20 @@ def battle(player, boss, final_boss=True):
                     valid = True
                 else:
                     print("  Returning to action menu...")
-
             elif choice == "3":
                 player.heal()
                 valid = True
-
             elif choice == "4":
                 print("\n  📊 --- Player ---")
                 player.display_stats()
                 print("  📊 --- Boss ---")
                 boss.display_stats()
-                # Don't count viewing stats as taking a turn
-
             else:
                 print("  ❌ Invalid choice — try again.")
 
-        # Tick cooldowns and end-of-turn hooks
         player.tick_cooldowns()
         player.end_of_turn()
 
-        # ── Boss's turn (if still alive) ───────────────────────────
         if boss.health > 0:
             pause(0.5)
             print(f"\n{'─' * 50}")
@@ -1494,40 +1167,45 @@ def battle(player, boss, final_boss=True):
         if player.health <= 0:
             break
 
-    # ── Outcome ───────────────────────────────────────────────────────
     pause(0.8)
     print(f"\n{'═' * 50}")
     if boss.health <= 0:
         print_victory(player, boss, final_boss=final_boss)
         print(f"{'═' * 50}\n")
         return True
-    else:
-        print_defeat(player, boss)
-        print(f"{'═' * 50}\n")
-        return False
+    print_defeat(player, boss)
+    print(f"{'═' * 50}\n")
+    return False
 
 
 def main():
-    """Entry point — show title screen, create hero, and start the battle."""
+    """Entry point — run menus, create the player, then start the battle(s)."""
     print_title()
     pause(0.5)
-    player = create_character()
-    first_boss = choose_boss()
+    mode       = choose_game_mode()
+    difficulty = choose_difficulty()
+    player     = create_character()
+    first_boss = choose_boss(difficulty=difficulty)
+    remaining  = _remaining_boss_option(first_boss) if mode == "gauntlet" else None
 
-    remaining = _remaining_boss_option(first_boss)
+    _print_run_summary(mode, difficulty, first_boss, remaining_option=remaining)
+
+    if mode == "single":
+        battle(player, first_boss, final_boss=True)
+        return
+
     is_only_boss = remaining is None
-    won_first = battle(player, first_boss, final_boss=is_only_boss)
+    won_first    = battle(player, first_boss, final_boss=is_only_boss)
     if not won_first or is_only_boss:
         return
 
     _between_boss_heal(player)
     next_name, _style, next_cls, _emoji = remaining
-    choice = input(f"\nAnother boss appears: {next_name}. Fight next boss? (y/n): ").strip().lower()
-    if choice not in {"y", "yes"}:
-        slow_print("\n  🏕️  You withdraw after the first victory. The realm is safer for now.")
-        return
-
-    second_boss = next_cls(next_name)
+    slow_print(
+        f"\n  ⚠️  The gauntlet continues... {next_name} descends upon you!",
+        delay=0.04,
+    )
+    second_boss = next_cls(next_name, difficulty=difficulty)
     battle(player, second_boss, final_boss=True)
 
 
