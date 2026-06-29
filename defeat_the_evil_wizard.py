@@ -19,10 +19,14 @@ if os.name == "nt" and sys.flags.utf8_mode != 1 and os.environ.get("WIZARD_UTF8_
     sys.exit(result.returncode)
 
 # ─────────────────────────────────────────────
-#  DEBUG FLAG  (set by --debug CLI arg)
+#  CONFIG  (replaces bare module-level DEBUG flag)
 # ─────────────────────────────────────────────
 
-DEBUG: bool = False
+@dataclass
+class _Config:
+    debug: bool = False
+
+_cfg = _Config()
 
 # ─────────────────────────────────────────────
 #  NAMED CONSTANTS
@@ -288,7 +292,7 @@ def prompt_input(prompt="") -> str:
 
 def slow_print(text: str, delay: float = 0.03) -> None:
     """Print text one character at a time for a dramatic effect."""
-    if DEBUG:
+    if _cfg.debug:
         print(text)
         return
     for char in text:
@@ -299,7 +303,7 @@ def slow_print(text: str, delay: float = 0.03) -> None:
 
 def pause(seconds: float = 0.6) -> None:
     """Sleep for the given number of seconds (skipped in debug mode)."""
-    if not DEBUG:
+    if not _cfg.debug:
         time.sleep(seconds)
 
 
@@ -1514,14 +1518,13 @@ def _run_once(difficulty: str, mode: str, player: Character, first_boss: Boss) -
 
 def main() -> None:
     """Entry point — parse args, show title, then loop through runs until quit."""
-    global DEBUG
     parser = argparse.ArgumentParser(description="Hero vs Boss fantasy battle game.")
     parser.add_argument(
         "--debug",
         action="store_true",
         help="Skip all delays and slow-print effects for fast testing.",
     )
-    DEBUG = parser.parse_args().debug
+    _cfg.debug = parser.parse_args().debug  # mutate the config object; no global needed
 
     print_title()
     pause(0.5)
