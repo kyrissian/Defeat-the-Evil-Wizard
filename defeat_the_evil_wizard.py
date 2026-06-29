@@ -40,7 +40,7 @@ POISON_DAMAGE            = 12     # damage poison deals at start of target's tur
 BLINDED_MISS_CHANCE      = 0.5    # probability of missing while Blinded
 
 # Warrior
-WARRIOR_HP               = 160
+WARRIOR_HP               = 170
 WARRIOR_ATK              = 26
 WARRIOR_HEAL             = 20
 WARRIOR_SHIELD_BASH_MULT = 1.5
@@ -48,21 +48,21 @@ WARRIOR_WHIRLWIND_MULT   = 2.0
 WARRIOR_BATTLE_CRY_BONUS = 8
 
 # Mage
-MAGE_HP                  = 105
+MAGE_HP                  = 115
 MAGE_ATK                 = 38
 MAGE_HEAL                = 15
 MAGE_FIREBALL_MULT       = 1.8
 MAGE_SURGE_BONUS         = 12
 
 # Archer
-ARCHER_HP                = 120
+ARCHER_HP                = 130
 ARCHER_ATK               = 32
 ARCHER_HEAL              = 18
 ARCHER_QUICK_SHOT_MULT   = 0.7
 ARCHER_SNIPER_MULT       = 1.7
 
 # Paladin
-PALADIN_HP               = 150
+PALADIN_HP               = 160
 PALADIN_ATK              = 27
 PALADIN_HEAL             = 28
 PALADIN_HOLY_STRIKE_MULT = 1.5
@@ -70,7 +70,7 @@ PALADIN_CONSEC_MULT      = 0.9
 PALADIN_CONSEC_HEAL      = 15
 
 # Death Knight
-DK_HP                    = 160
+DK_HP                    = 170
 DK_ATK                   = 31
 DK_HEAL                  = 16
 DK_DEATH_COIL_DRAIN      = 18
@@ -79,7 +79,7 @@ DK_BLOOD_BOIL_MULT       = 2.1
 DK_DARK_PACT_DRAIN       = 20
 
 # Holy Priest
-PRIEST_HP                = 170
+PRIEST_HP                = 180
 PRIEST_ATK               = 29
 PRIEST_HEAL              = 30
 PRIEST_SMITE_MULT        = 1.25
@@ -89,14 +89,14 @@ PRIEST_HYMN_HEAL         = 25
 PRIEST_HYMN_DEBUFF       = 4
 
 # Rogue
-ROGUE_HP                 = 120
+ROGUE_HP                 = 130
 ROGUE_ATK                = 34
 ROGUE_HEAL               = 15
 ROGUE_BACKSTAB_MULT      = 2.6
 ROGUE_BACKSTAB_CHANCE    = 0.65
 
 # Druid
-DRUID_HP                 = 130
+DRUID_HP                 = 140
 DRUID_ATK                = 30
 DRUID_HEAL               = 25
 DRUID_WRATH_MULT         = 1.5
@@ -1200,8 +1200,8 @@ class AncientDragon(Boss):
             self._hit_player(player, int(self.attack_power * self._tail_slam_mult))
             return
 
-        slow_print("  🐾 The dragon lashes out with twin claw swipes!")
-        for _ in range(2):
+        slow_print("  🐾 The dragon lashes out with a claw swipe!")
+        for _ in range(1):
             if player.health <= 0:
                 return
             damage = random.randint(
@@ -1261,7 +1261,7 @@ def choose_game_mode() -> str:
     print("     Defeat one boss, then face the second with partial healing.")
     print("═" * 50)
     while True:
-        choice = prompt_input("Choose mode (Enter=1, 1-2): ").strip()
+        choice = prompt_input("\n  Press 1 or 2: ").strip()
         if choice in GAME_MODES:
             return GAME_MODES[choice]
         print("  ❌ Invalid choice — enter 1 or 2.")
@@ -1278,7 +1278,7 @@ def choose_difficulty() -> str:
     print("     Harder bosses with higher damage and stronger pressure.")
     print("═" * 50)
     while True:
-        choice = prompt_input("Choose difficulty (Enter=1, 1-2): ").strip()
+        choice = prompt_input("\n  Press 1 or 2: ").strip()
         if choice in DIFFICULTY_MODES:
             return DIFFICULTY_MODES[choice]
         print("  ❌ Invalid choice — enter 1 or 2.")
@@ -1295,7 +1295,7 @@ def create_character() -> Character:
 
     valid_choices = {str(i) for i in range(1, len(HERO_REGISTRY) + 1)}
     while True:
-        choice = prompt_input("Enter the number of your class: ").strip()
+        choice = prompt_input(f"\n  Enter a number (1-{len(HERO_REGISTRY)}): ").strip()
         if choice in valid_choices:
             break
         print(f"  ❌ Invalid choice — enter a number between 1 and {len(HERO_REGISTRY)}.")
@@ -1320,7 +1320,7 @@ def choose_boss(difficulty: str = "normal") -> Boss:
         print(f"     {style}")
     print("═" * 50)
     while True:
-        choice = prompt_input("Choose your boss (1-2): ").strip()
+        choice = prompt_input("\n  Press 1 or 2: ").strip()
         if choice in BOSS_OPTIONS:
             break
         print("  ❌ Invalid choice — enter 1 or 2.")
@@ -1404,7 +1404,7 @@ def _ask_play_again() -> bool:
     print("  2. No  — quit")
     print("═" * 50)
     while True:
-        choice = prompt_input("  Choice (Enter=1): ").strip()
+        choice = prompt_input("\n  Press 1 or 2: ").strip()
         if choice in ("", "1"):
             return True
         if choice == "2":
