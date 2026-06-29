@@ -552,10 +552,10 @@ class Warrior(Character):
         ]
 
     def _shield_bash(self, opponent: Character) -> None:
-        """Deal 1.5× damage then raise a shield against the next incoming hit."""
-        self._deal_damage(opponent, int(self.attack_power * WARRIOR_SHIELD_BASH_MULT))
+        """Raise a shield then deal 1.5× damage; shield is guaranteed regardless of outcome."""
         self.status_effects[STATUS_SHIELD] = True
         slow_print(f"  🛡️  {self.name} raises shield — next attack will be blocked!")
+        self._deal_damage(opponent, int(self.attack_power * WARRIOR_SHIELD_BASH_MULT))
 
     def _whirlwind(self, opponent: Character) -> None:
         """Spin and deal 2× damage to the opponent."""
@@ -1359,11 +1359,15 @@ def _show_ability_menu(player: Character) -> int:
         print(f"    {i}. {ab.name}{status} — {ab.desc}")
     print("    0. Cancel")
     raw = prompt_input("  Ability number: ").strip()
-    if raw == "0" or not raw.isdigit():
+    if raw == "0":
+        print("  ↩️  Cancelled — returning to action menu.")
+        return -1
+    if not raw.isdigit():
+        print("  ❌ Invalid input — returning to action menu.")
         return -1
     idx = int(raw) - 1
     if idx < 0 or idx >= len(player.abilities):
-        print("  ❌ Out of range.")
+        print("  ❌ Out of range — returning to action menu.")
         return -1
     return idx
 
