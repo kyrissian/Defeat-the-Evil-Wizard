@@ -1,4 +1,4 @@
-"""Run a turn-based hero-vs-boss fantasy battle game."""
+"""Run a turn-based hero-vs-boss fantasy battle game."""  # pylint: disable=too-many-lines
 
 import argparse
 import os
@@ -82,8 +82,10 @@ DK_HEAL                  = 16
 DK_DEATH_COIL_DRAIN      = 18
 DK_BLOOD_BOIL_COST       = 18
 DK_BLOOD_BOIL_MULT       = 2.1
-DK_DARK_PACT_DRAIN       = 20
+DK_DARK_PACT_DRAIN       = 20    # kept for any future use
+# Army of the Dead: one-time summon granting shield + evade
 DK_CORPSE_EXPLOSION_COST = 25    # HP sacrificed for Corpse Explosion
+DK_CORPSE_EXPLOSION_MULT = 1.8   # damage multiplier for Corpse Explosion
 
 # Holy Priest
 PRIEST_HP                = 180
@@ -112,7 +114,6 @@ DRUID_WRATH_MULT         = 1.5
 DRUID_BEAR_HP_BONUS      = 24
 DRUID_REGROWTH_INSTANT   = 20
 DRUID_REGROWTH_TICK      = 12
-DRUID_MOONFIRE_DAMAGE    = MOONFIRE_DAMAGE  # alias for clarity in Entangle
 
 # EvilWizard (normal / challenging)
 WIZARD_HP_NORMAL         = 200
@@ -279,8 +280,6 @@ class Ability:
         """Reduce the remaining cooldown by one, floored at zero."""
         if self.cooldown > 0:
             self.cooldown -= 1
-
-
 # ─────────────────────────────────────────────
 #  RESISTANCE PROFILE
 # ─────────────────────────────────────────────
@@ -298,6 +297,15 @@ class ResistanceProfile:
     dark_bonus_damage:  int   = 0       # extra damage EvilWizard deals each turn
 
 
+@dataclass
+class _DragonScaling:
+    """Groups the difficulty-dependent scaling values for AncientDragon."""
+
+    aura:        int
+    aura_priest: int
+    inferno:     float
+    inf_priest:  float
+    tail:        float
 # ─────────────────────────────────────────────
 #  IO HELPERS
 # ─────────────────────────────────────────────
@@ -313,8 +321,6 @@ def prompt_input(prompt="") -> str:
     except KeyboardInterrupt:
         print("\n  👋 Game interrupted.")
         sys.exit(0)
-
-
 def slow_print(text: str, delay: float = 0.03) -> None:
     """Print text one character at a time for a dramatic effect."""
     if _cfg.debug:
@@ -324,14 +330,10 @@ def slow_print(text: str, delay: float = 0.03) -> None:
         print(char, end="", flush=True)
         time.sleep(delay)
     print()
-
-
 def pause(seconds: float = 0.6) -> None:
     """Sleep for the given number of seconds (skipped in debug mode)."""
     if not _cfg.debug:
         time.sleep(seconds)
-
-
 # ─────────────────────────────────────────────
 #  DISPLAY HELPERS
 # ─────────────────────────────────────────────
@@ -350,8 +352,6 @@ def print_hp_bars(player: "Character", boss: "Character") -> None:
 
     print(f"\n  {make_bar('YOU', player)}")
     print(f"  {make_bar('FOE', boss)}\n")
-
-
 def print_title() -> None:
     """Print the game title banner."""
     print("\n" + "═" * 50)
@@ -359,8 +359,6 @@ def print_title() -> None:
     slow_print("  Defeat the Evil Wizard before he destroys the realm...", delay=0.03)
     print("═" * 50)
     pause(0.8)
-
-
 def print_victory(player: "Character", boss: "Character", final_boss: bool = True) -> None:
     """Print the victory screen after defeating a boss."""
     print("\n" + "═" * 50)
@@ -375,8 +373,6 @@ def print_victory(player: "Character", boss: "Character", final_boss: bool = Tru
         slow_print(f"  🏆  {player.name} has defeated {boss.name}!")
         slow_print("  A new threat stirs... this war is not over yet. ⚔️")
     print("═" * 50)
-
-
 def print_defeat(player: "Character", boss: "Character") -> None:
     """Print the defeat screen with a tombstone and GAME OVER banner."""
     print("\n" + "═" * 50)
@@ -387,14 +383,14 @@ def print_defeat(player: "Character", boss: "Character") -> None:
     slow_print("\n  * * * G A M E   O V E R * * *")
     slow_print(f"  {boss.name} cackles in triumph... the realm is lost. 🌑")
     print("═" * 50)
-
-
 # ─────────────────────────────────────────────
 #  BASE CHARACTER
 # ─────────────────────────────────────────────
 
 class Character:
     """Shared stats, combat methods, and status-effect logic for all characters."""
+
+    emoji: str = "❓"  # overridden in each subclass
 
     def __init__(
         self,
@@ -498,6 +494,14 @@ class Character:
             return True
         return False
 
+    def reset(self) -> "Character":
+        """Return a fresh instance of the same class with the same name."""
+        return type(self)(self.name)  # pylint: disable=no-value-for-parameter,missing-kwoa
+
+    def try_resurrect(self) -> bool:
+        """Return True and restore HP if a resurrection is pending; False otherwise."""
+        return False
+
     def should_skip_turn_from_control(self) -> bool:
         """Return True and print a message if Frozen or Blinded causes a lost turn."""
         if self.status_effects.get(STATUS_FROZEN):
@@ -516,9 +520,8 @@ class Character:
         bar_len = 20
         filled  = int(bar_len * max(self.health, 0) / self.max_health)
         hp_bar  = "█" * filled + "░" * (bar_len - filled)
-        emoji   = CLASS_EMOJI.get(type(self).__name__, "❓")
         print(
-            f"\n  {emoji} {self.name} | [{hp_bar}] {self.health}/{self.max_health} HP"
+            f"\n  {self.emoji} {self.name} | [{hp_bar}] {self.health}/{self.max_health} HP"
             f" | ⚔️  ATK {self.attack_power}"
         )
         active = [
@@ -545,14 +548,14 @@ class Character:
         opponent.health -= amount
         self.health = min(self.health + amount, self.max_health)
         return opponent.health, self.health
-
-
 # ─────────────────────────────────────────────
 #  HERO CLASSES
 # ─────────────────────────────────────────────
 
 class Warrior(Character):
     """Tank with sustain, shields, and a permanent attack buff."""
+
+    emoji = "⚔️"
 
     def __init__(self, name: str) -> None:
         """Set up Warrior stats and abilities."""
@@ -615,10 +618,10 @@ class Warrior(Character):
             f"  💢 {self.name} rallies! Healed {healed} HP."
             f" ({self.health}/{self.max_health})"
         )
-
-
 class Mage(Character):
     """Glass cannon with a surge mechanic for double-action turns."""
+
+    emoji = "🔮"
 
     def __init__(self, name: str) -> None:
         """Set up Mage stats and abilities."""
@@ -699,10 +702,10 @@ class Mage(Character):
             f"  🔵 Mana Shield flares! Sacrificed {MAGE_MANA_SHIELD_COST} HP."
             f" Next attack blocked AND evaded. HP: {self.health}/{self.max_health}"
         )
-
-
 class Archer(Character):
     """Speed and range specialist with a guaranteed-dodge utility."""
+
+    emoji = "🏹"
 
     def __init__(self, name: str) -> None:
         """Set up Archer stats and abilities."""
@@ -765,10 +768,10 @@ class Archer(Character):
                 return
             slow_print(f"  🏹 Arrow {i}:", delay=0.02)
             self._deal_damage(opponent, int(self.attack_power * ARCHER_RAIN_MULT))
-
-
 class Paladin(Character):
     """Holy defender with strong heals and a damage-absorbing shield."""
+
+    emoji = "🛡️"
 
     def __init__(self, name: str) -> None:
         """Set up Paladin stats and abilities."""
@@ -831,10 +834,10 @@ class Paladin(Character):
             f"  🤲 Divine light surges through {self.name}! HP fully restored."
             f" ({self.health}/{self.max_health})"
         )
-
-
 class DeathKnight(Character):
     """Dark drainer who trades and steals HP to stay alive."""
+
+    emoji = "💀"
 
     def __init__(self, name: str) -> None:
         """Set up DeathKnight stats and abilities."""
@@ -844,6 +847,7 @@ class DeathKnight(Character):
             attack_power=DK_ATK,
             heal_power=DK_HEAL,
         )
+        self._army_of_the_dead_used = False
         self.abilities = [
             Ability(
                 "💀 Death Coil",
@@ -856,13 +860,13 @@ class DeathKnight(Character):
                 self._blood_boil, max_cooldown=2,
             ),
             Ability(
-                "🌑 Dark Pact",
-                f"Drain {DK_DARK_PACT_DRAIN} HP from opponent directly into your pool.",
-                self._dark_pact, max_cooldown=3,
+                "💀 Army of the Dead",
+                "One-time summon: raise undead to shield AND evade the next attack.",
+                self._army_of_the_dead, max_cooldown=0,
             ),
             Ability(
                 "💥 Corpse Explosion",
-                f"Sacrifice {DK_CORPSE_EXPLOSION_COST} HP to poison AND blind the opponent.",
+                f"Sacrifice {DK_CORPSE_EXPLOSION_COST} HP to deal 1.8× damage, poison AND blind.",
                 self._corpse_explosion, max_cooldown=4,
             ),
         ]
@@ -889,33 +893,37 @@ class DeathKnight(Character):
         )
         self._deal_damage(opponent, int(self.attack_power * DK_BLOOD_BOIL_MULT))
 
-    def _dark_pact(self, opponent: Character) -> None:
-        """Drain HP directly from the opponent into self."""
-        opp_hp, self_hp = self._drain_life(opponent, DK_DARK_PACT_DRAIN)
+    def _army_of_the_dead(self, _opponent: Character) -> None:
+        """One-time summon: grant shield and evade simultaneously."""
+        if self._army_of_the_dead_used:
+            slow_print("  ❌ The dead have already answered your call — once per battle only!")
+            return
+        self._army_of_the_dead_used     = True
+        self.status_effects[STATUS_SHIELD] = True
+        self.status_effects[STATUS_EVADE]  = True
         slow_print(
-            f"  🌑 Dark Pact! Drained {DK_DARK_PACT_DRAIN} HP from {opponent.name}."
-            f" {self.name} HP: {self_hp}/{self.max_health}"
+            f"  💀 {self.name} raises the dead! Undead warriors surround you —"
+            " the next attack will be both blocked AND evaded!"
         )
-        if opp_hp <= 0:
-            slow_print(f"  ☠️  {opponent.name} has been defeated!")
 
     def _corpse_explosion(self, opponent: Character) -> None:
-        """Sacrifice HP to apply poison and blind to the opponent."""
+        """Sacrifice HP to deal damage and apply poison and blind."""
         if self.health <= DK_CORPSE_EXPLOSION_COST:
             slow_print("  ❌ Not enough HP to fuel Corpse Explosion!")
             return
         self.health -= DK_CORPSE_EXPLOSION_COST
-        opponent.status_effects[STATUS_POISONED] = True
-        opponent.status_effects[STATUS_BLINDED]  = True
         slow_print(
-            f"  💥 Corpse Explosion! Sacrificed {DK_CORPSE_EXPLOSION_COST} HP."
-            f" {opponent.name} is poisoned and blinded!"
+            f"  💥 Corpse Explosion! {self.name} sacrifices {DK_CORPSE_EXPLOSION_COST} HP..."
             f" HP: {self.health}/{self.max_health}"
         )
-
-
+        self._deal_damage(opponent, int(self.attack_power * DK_CORPSE_EXPLOSION_MULT))
+        opponent.status_effects[STATUS_POISONED] = True
+        opponent.status_effects[STATUS_BLINDED]  = True
+        slow_print(f"  ☠️  {opponent.name} is poisoned and blinded!")
 class HolyPriest(Character):
     """Light-sustain healer who weakens opponents over time."""
+
+    emoji = "✨"
 
     def __init__(self, name: str) -> None:
         """Set up HolyPriest stats and abilities."""
@@ -997,12 +1005,26 @@ class HolyPriest(Character):
             f" {int(PRIEST_RESURRECTION_HP * 100)} % HP."
         )
 
+    def try_resurrect(self) -> bool:
+        """Trigger resurrection if armed and HP has dropped to zero."""
+        if self._resurrection_triggered and self.health <= 0:
+            self._resurrection_used      = True
+            self._resurrection_triggered = False
+            self.health = int(self.max_health * PRIEST_RESURRECTION_HP)
+            slow_print(
+                f"\n  ✝️  {self.name} rises from the brink of death!"
+                f" HP restored to {self.health}/{self.max_health}!",
+                delay=0.05,
+            )
+            return True
+        return False
+
     def start_of_turn(self) -> None:
         """Nothing to tick at start of turn for HolyPriest."""
-
-
 class Rogue(Character):
     """Assassin with high-risk burst, poison, and smoke utility."""
+
+    emoji = "🗡️"
 
     def __init__(self, name: str) -> None:
         """Set up Rogue stats and abilities."""
@@ -1074,10 +1096,10 @@ class Rogue(Character):
             f"  🌑 {self.name} vanishes into shadow"
             " — next Backstab is guaranteed to hit!"
         )
-
-
 class Druid(Character):
     """Nature shaman with a delayed heal-over-time and a bear form."""
+
+    emoji = "🌿"
 
     def __init__(self, name: str) -> None:
         """Set up Druid stats and abilities."""
@@ -1153,8 +1175,6 @@ class Druid(Character):
             f"  🌱 Roots burst from the ground! {opponent.name} is entangled and frozen."
             f" Moonfire will burn them each turn!"
         )
-
-
 # ─────────────────────────────────────────────
 #  BASE BOSS
 # ─────────────────────────────────────────────
@@ -1163,6 +1183,13 @@ class Boss(Character):
     """Shared logic for all boss types: regen, poison tick, and direct hit."""
 
     _regen_per_turn: int = 0
+
+    def reset(self) -> "Boss":
+        """Return a fresh boss instance preserving name and difficulty."""
+        difficulty = getattr(self, "difficulty", "normal")
+        return type(self)(  # pylint: disable=no-value-for-parameter,missing-kwoa,unexpected-keyword-arg
+            self.name, difficulty=difficulty
+        )
 
     def regenerate(self, emoji: str = "💜") -> None:
         """Restore a fixed amount of HP at the start of each boss turn."""
@@ -1197,8 +1224,6 @@ class Boss(Character):
     def take_turn(self, player: Character) -> None:
         """Execute the boss's full turn; subclasses must implement this."""
         raise NotImplementedError
-
-
 # ─────────────────────────────────────────────
 #  BOSS CLASSES
 # ─────────────────────────────────────────────
@@ -1206,18 +1231,24 @@ class Boss(Character):
 class EvilWizard(Boss):
     """Regenerating spellcaster with suppression, enrage, and void burst."""
 
+    emoji = "🧙"
+
+    _STATS: dict = {
+        "normal": (
+            WIZARD_HP_NORMAL, WIZARD_ATK_NORMAL,
+            WIZARD_REGEN_NORMAL, WIZARD_DARK_DMG_NORMAL,
+        ),
+        "challenging": (
+            WIZARD_HP_HARD, WIZARD_ATK_HARD,
+            WIZARD_REGEN_HARD, WIZARD_DARK_DMG_HARD,
+        ),
+    }
+
     def __init__(self, name: str, difficulty: str = "normal") -> None:
         """Set up EvilWizard stats scaled to the chosen difficulty."""
-        if difficulty == "challenging":
-            health  = WIZARD_HP_HARD
-            attack  = WIZARD_ATK_HARD
-            regen   = WIZARD_REGEN_HARD
-            dark_dmg = WIZARD_DARK_DMG_HARD
-        else:
-            health  = WIZARD_HP_NORMAL
-            attack  = WIZARD_ATK_NORMAL
-            regen   = WIZARD_REGEN_NORMAL
-            dark_dmg = WIZARD_DARK_DMG_NORMAL
+        health, attack, regen, dark_dmg = self._STATS.get(
+            difficulty, self._STATS["normal"]
+        )
         super().__init__(name, health=health, attack_power=attack, heal_power=5)
         self.difficulty         = difficulty
         self._regen_per_turn    = regen
@@ -1279,42 +1310,40 @@ class EvilWizard(Boss):
             self._hit_player(player, int(self.attack_power * WIZARD_SHADOW_MULT))
         else:
             self.attack(player)
-
-
 class AncientDragon(Boss):
     """Relentless bruiser with fury cycles, aura damage, and inferno breath."""
 
+    emoji = "🐉"
+
+    _STATS: dict = {
+        "normal": (
+            DRAGON_HP_NORMAL, DRAGON_ATK_NORMAL, DRAGON_REGEN_NORMAL,
+            _DragonScaling(
+                DRAGON_AURA_NORMAL, DRAGON_AURA_PRIEST_NORMAL,
+                DRAGON_INFERNO_NORMAL, DRAGON_INFERNO_PRIEST_NORMAL, DRAGON_TAIL_NORMAL,
+            ),
+        ),
+        "challenging": (
+            DRAGON_HP_HARD, DRAGON_ATK_HARD, DRAGON_REGEN_HARD,
+            _DragonScaling(
+                DRAGON_AURA_HARD, DRAGON_AURA_PRIEST_HARD,
+                DRAGON_INFERNO_HARD, DRAGON_INFERNO_PRIEST_HARD, DRAGON_TAIL_HARD,
+            ),
+        ),
+    }
+
     def __init__(self, name: str, difficulty: str = "normal") -> None:
         """Set up AncientDragon stats scaled to the chosen difficulty."""
-        if difficulty == "challenging":
-            health       = DRAGON_HP_HARD
-            attack       = DRAGON_ATK_HARD
-            regen        = DRAGON_REGEN_HARD
-            aura         = DRAGON_AURA_HARD
-            aura_priest  = DRAGON_AURA_PRIEST_HARD
-            inferno      = DRAGON_INFERNO_HARD
-            inf_priest   = DRAGON_INFERNO_PRIEST_HARD
-            tail         = DRAGON_TAIL_HARD
-        else:
-            health       = DRAGON_HP_NORMAL
-            attack       = DRAGON_ATK_NORMAL
-            regen        = DRAGON_REGEN_NORMAL
-            aura         = DRAGON_AURA_NORMAL
-            aura_priest  = DRAGON_AURA_PRIEST_NORMAL
-            inferno      = DRAGON_INFERNO_NORMAL
-            inf_priest   = DRAGON_INFERNO_PRIEST_NORMAL
-            tail         = DRAGON_TAIL_NORMAL
+        health, attack, regen, scaling = self._STATS.get(
+            difficulty, self._STATS["normal"]
+        )
         super().__init__(name, health=health, attack_power=attack, heal_power=0)
-        self.difficulty           = difficulty
-        self._regen_per_turn      = regen
-        self._aura_damage         = aura
-        self._priest_aura_damage  = aura_priest
-        self._inferno_mult        = inferno
-        self._priest_inferno_mult = inf_priest
-        self._tail_slam_mult      = tail
-        self._enraged             = False
-        self._inferno_used        = False
-        self._fury                = 0
+        self.difficulty      = difficulty
+        self._regen_per_turn = regen
+        self._scaling        = scaling
+        self._enraged        = False
+        self._inferno_used   = False
+        self._fury           = 0
 
     def take_turn(self, player: Character) -> None:
         """Tick statuses, regenerate, then execute the dragon's combat pattern."""
@@ -1340,8 +1369,8 @@ class AncientDragon(Boss):
             pause(0.4)
 
         profile = player.resistance_profile
-        aura    = self._priest_aura_damage if profile.holy_aura_reduced \
-                  else self._aura_damage
+        aura    = self._scaling.aura_priest if profile.holy_aura_reduced \
+                  else self._scaling.aura
         player.health -= aura
         slow_print(f"  🌋 Scorching aura burns {player.name} for {aura} damage!")
         if player.health <= 0:
@@ -1353,8 +1382,8 @@ class AncientDragon(Boss):
         if not self._inferno_used and \
                 self.health <= self.max_health * DRAGON_INFERNO_THRESHOLD:
             self._inferno_used = True
-            mult = self._priest_inferno_mult if profile.holy_aura_reduced \
-                   else self._inferno_mult
+            mult = self._scaling.inf_priest if profile.holy_aura_reduced \
+                   else self._scaling.inferno
             slow_print("\n  🔥 INFERNO BREATH engulfs the battlefield!", delay=0.05)
             pause(0.5)
             self._hit_player(player, int(self.attack_power * mult))
@@ -1364,20 +1393,16 @@ class AncientDragon(Boss):
             self._fury = 0
             slow_print("\n  🐲 Tail Slam crashes down with crushing force!", delay=0.05)
             pause(0.3)
-            self._hit_player(player, int(self.attack_power * self._tail_slam_mult))
+            self._hit_player(player, int(self.attack_power * self._scaling.tail))
             return
 
         slow_print("  🐾 The dragon lashes out with a claw swipe!")
-        for _ in range(1):
-            if player.health <= 0:
-                return
+        if player.health > 0:
             damage = random.randint(
                 int(self.attack_power * DRAGON_CLAW_LOW),
                 int(self.attack_power * DRAGON_CLAW_HIGH),
             )
             self._hit_player(player, damage)
-
-
 # ─────────────────────────────────────────────
 #  GAME DATA
 # ─────────────────────────────────────────────
@@ -1411,8 +1436,6 @@ BOSS_OPTIONS: dict[str, tuple] = {
 
 GAME_MODES:       dict[str, str] = {"": "single",  "1": "single",  "2": "gauntlet"}
 DIFFICULTY_MODES: dict[str, str] = {"": "normal",  "1": "normal",  "2": "challenging"}
-
-
 # ─────────────────────────────────────────────
 #  GAME FUNCTIONS
 # ─────────────────────────────────────────────
@@ -1426,14 +1449,16 @@ def choose_game_mode() -> str:
     print("     Classic run: one hero vs one boss.")
     print("  2. Gauntlet Challenge")
     print("     Defeat one boss, then face the second with partial healing.")
+    print("  q. Quit")
     print("═" * 50)
     while True:
-        choice = prompt_input("\n  Press 1 or 2: ").strip()
+        choice = prompt_input("\n  Press 1, 2, or q: ").strip().lower()
+        if choice == "q":
+            slow_print("\n  👋 Thanks for playing. Farewell, hero! ⚔️\n", delay=0.03)
+            sys.exit(0)
         if choice in GAME_MODES:
             return GAME_MODES[choice]
-        print("  ❌ Invalid choice — enter 1 or 2.")
-
-
+        print("  ❌ Invalid choice — enter 1, 2, or q.")
 def choose_difficulty() -> str:
     """Display the difficulty menu and return the player's choice."""
     print("\n" + "═" * 50)
@@ -1449,10 +1474,8 @@ def choose_difficulty() -> str:
         if choice in DIFFICULTY_MODES:
             return DIFFICULTY_MODES[choice]
         print("  ❌ Invalid choice — enter 1 or 2.")
-
-
-def create_character() -> Character:
-    """Display the hero-selection menu, prompt for a name, and return a new player."""
+def _print_hero_list() -> None:
+    """Print the numbered hero selection table."""
     print("\n" + "═" * 50)
     slow_print("  ⚔️   CHOOSE YOUR HERO   ⚔️", delay=0.04)
     print("═" * 50)
@@ -1460,23 +1483,29 @@ def create_character() -> Character:
         print(f"  {i}. {cname:<13}| HP: {hp:<4}| ATK: {atk:<3}| {role:<16} {emoji}")
     print("═" * 50)
 
-    valid_choices = {str(i) for i in range(1, len(HERO_REGISTRY) + 1)}
+
+def _pick_hero_class() -> type:
+    """Prompt until a valid hero number is entered; return the chosen class."""
+    valid = {str(i) for i in range(1, len(HERO_REGISTRY) + 1)}
     while True:
         choice = prompt_input(f"\n  Enter a number (1-{len(HERO_REGISTRY)}): ").strip()
-        if choice in valid_choices:
-            break
+        if choice in valid:
+            *_, cls = HERO_REGISTRY[int(choice) - 1]
+            return cls
         print(f"  ❌ Invalid choice — enter a number between 1 and {len(HERO_REGISTRY)}.")
 
-    _cname, _hp, _atk, _role, _emoji, cls = HERO_REGISTRY[int(choice) - 1]
+
+def create_character() -> Character:
+    """Display the hero-selection menu, prompt for a name, and return a new player."""
+    _print_hero_list()
+    cls    = _pick_hero_class()
     name   = prompt_input("Enter your character's name: ").strip() or "Hero"
     player = cls(name)
     pause(0.3)
-    intro = CLASS_INTROS.get(cls.__name__, f'  "{name}" steps forward.')
+    intro  = CLASS_INTROS.get(cls.__name__, f'  "{name}" steps forward.')
     slow_print("\n  " + intro.replace("{name}", name), delay=0.04)
     pause(0.6)
     return player
-
-
 def choose_boss(difficulty: str = "normal") -> Boss:
     """Display the boss-selection menu and return a new boss instance."""
     print("\n" + "═" * 50)
@@ -1493,16 +1522,12 @@ def choose_boss(difficulty: str = "normal") -> Boss:
         print("  ❌ Invalid choice — enter 1 or 2.")
     name, _style, cls, _emoji = BOSS_OPTIONS[choice]
     return cls(name, difficulty=difficulty)
-
-
 def _remaining_boss_option(current_boss: Boss) -> tuple | None:
     """Return the BOSS_OPTIONS entry for whichever boss was not chosen, or None."""
     for name, style, cls, emoji in BOSS_OPTIONS.values():
         if not isinstance(current_boss, cls):
             return name, style, cls, emoji
     return None
-
-
 def _between_boss_heal(player: Character) -> None:
     """Restore 35 % of max HP between gauntlet fights and print a respite message."""
     heal_amount   = max(1, int(player.max_health * BETWEEN_BOSS_HEAL_RATIO))
@@ -1516,8 +1541,6 @@ def _between_boss_heal(player: Character) -> None:
         delay=0.04,
     )
     print("═" * 50)
-
-
 def _show_ability_menu(player: Character) -> int:
     """Print the ability list and return the chosen 0-based index, or -1 to cancel."""
     print("\n  ✨ Choose an ability:")
@@ -1537,8 +1560,6 @@ def _show_ability_menu(player: Character) -> int:
         print("  ❌ Out of range — returning to action menu.")
         return -1
     return idx
-
-
 def _print_run_summary(
     mode:             str,
     difficulty:       str,
@@ -1558,14 +1579,10 @@ def _print_run_summary(
         print(f"  Next Boss : {remaining_option[0]}")
     print("═" * 50)
     pause(0.4)
-
-
 def _confirm_or_restart() -> bool:
     """Show a confirm/restart prompt after the run summary; return True to proceed."""
     print("\n  Press Enter to begin, or type 'r' to start over.")
     return prompt_input("  > ").strip().lower() != "r"
-
-
 def _ask_play_again() -> bool:
     """Ask the player if they want to start a new run; return True if yes."""
     print("\n" + "═" * 50)
@@ -1581,8 +1598,6 @@ def _ask_play_again() -> bool:
         if choice == "2":
             return False
         print("  ❌ Enter 1 or 2.")
-
-
 def _handle_player_turn(player: Character, boss: Boss) -> str | None:
     """Handle the player's action for one turn; return 'restart' or None."""
     print(f"\n  🎮 Your turn, {player.name}:")
@@ -1598,7 +1613,7 @@ def _handle_player_turn(player: Character, boss: Boss) -> str | None:
         if choice == "1":
             player.attack(boss)
             return None
-        elif choice == "2":
+        if choice == "2":
             idx = _show_ability_menu(player)
             if idx >= 0:
                 player.use_ability(idx, boss)
@@ -1627,12 +1642,10 @@ def _handle_player_turn(player: Character, boss: Boss) -> str | None:
                 return "restart"
         else:
             print("  ❌ Invalid choice — try again.")
-
-
 def battle(player: Character, boss: Boss, final_boss: bool = True) -> str:
     """Run a single combat loop; return 'win', 'loss', or 'restart'."""
     pause(0.5)
-    boss_emoji = CLASS_EMOJI.get(type(boss).__name__, "👹")
+    boss_emoji = boss.emoji
     slow_print(f"\n  {boss_emoji} {boss.name} appears from the shadows...", delay=0.05)
     pause(0.5)
     slow_print("  Prepare for battle! ⚔️", delay=0.05)
@@ -1656,7 +1669,7 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> str:
         player.tick_cooldowns()
         player.end_of_turn()
 
-        if boss.health > 0:
+        if boss.health > 0 and player.health > 0:
             pause(0.5)
             print(f"\n{'─' * 50}")
             slow_print(f"  {boss_emoji} {boss.name}'s turn...", delay=0.04)
@@ -1664,16 +1677,8 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> str:
             pause(0.3)
             boss.take_turn(player)
 
-        if player.health <= 0 and hasattr(player, "_resurrection_triggered") \
-                and player._resurrection_triggered:  # noqa: SLF001
-            player._resurrection_used       = True   # noqa: SLF001
-            player._resurrection_triggered  = False  # noqa: SLF001
-            player.health = int(player.max_health * PRIEST_RESURRECTION_HP)
-            slow_print(
-                f"\n  ✝️  {player.name} rises from the brink of death!"
-                f" HP restored to {player.health}/{player.max_health}!",
-                delay=0.05,
-            )
+        if player.health <= 0:
+            player.try_resurrect()
 
         if player.health <= 0:
             break
@@ -1687,8 +1692,12 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> str:
     print_defeat(player, boss)
     print(f"{'═' * 50}\n")
     return "loss"
-
-
+def _battle_with_restart(player: Character, boss: Boss, final_boss: bool = True) -> str:
+    """Run battle, restarting from fresh instances if the player requests it."""
+    result = "restart"
+    while result == "restart":
+        result = battle(player.reset(), boss.reset(), final_boss=final_boss)
+    return result
 def _run_once(difficulty: str, mode: str, player: Character, first_boss: Boss) -> None:
     """Execute one full run (single or gauntlet) for the given settings."""
     remaining = _remaining_boss_option(first_boss) if mode == "gauntlet" else None
@@ -1699,35 +1708,25 @@ def _run_once(difficulty: str, mode: str, player: Character, first_boss: Boss) -
         return
 
     if mode == "single":
-        result = "restart"
-        while result == "restart":
-            fresh_player = type(player)(player.name)
-            fresh_boss   = type(first_boss)(first_boss.name, difficulty=difficulty)
-            result = battle(fresh_player, fresh_boss, final_boss=True)
+        _battle_with_restart(player, first_boss, final_boss=True)
         return
 
     is_only_boss = remaining is None
-    result = "restart"
-    while result == "restart":
-        fresh_player = type(player)(player.name)
-        fresh_boss   = type(first_boss)(first_boss.name, difficulty=difficulty)
-        result = battle(fresh_player, fresh_boss, final_boss=is_only_boss)
+    result       = _battle_with_restart(player, first_boss, final_boss=is_only_boss)
 
     if result != "win" or is_only_boss:
         return
 
+    # Gauntlet second boss — use a fresh player reset from the original
+    fresh_player = player.reset()
     _between_boss_heal(fresh_player)
     next_name, _style, next_cls, _emoji = remaining
     slow_print(
         f"\n  ⚠️  The gauntlet continues... {next_name} descends upon you!",
         delay=0.04,
     )
-    result = "restart"
-    while result == "restart":
-        second_boss = next_cls(next_name, difficulty=difficulty)
-        result = battle(fresh_player, second_boss, final_boss=True)
-
-
+    second_boss = next_cls(next_name, difficulty=difficulty)
+    _battle_with_restart(fresh_player, second_boss, final_boss=True)
 def main() -> None:
     """Entry point — parse args, show title, then loop through runs until quit."""
     parser = argparse.ArgumentParser(description="Hero vs Boss fantasy battle game.")
@@ -1752,7 +1751,5 @@ def main() -> None:
         if not _ask_play_again():
             slow_print("\n  👋 Thanks for playing. Farewell, hero! ⚔️\n", delay=0.03)
             break
-
-
 if __name__ == "__main__":
     main()
