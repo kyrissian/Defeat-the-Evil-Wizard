@@ -33,10 +33,10 @@ _cfg = _Config()
 # ─────────────────────────────────────────────
 
 # Combat
-ATTACK_ROLL_LOW          = 0.8    # lower bound of normal attack damage roll
-ATTACK_ROLL_HIGH         = 1.2    # upper bound of normal attack damage roll
-MOONFIRE_DAMAGE          = 8      # damage Moonfire deals to its owner per turn
-POISON_DAMAGE            = 12     # damage poison deals at start of target's turn
+ATTACK_ROLL_LOW          = 0.75   # lower bound of normal attack damage roll
+ATTACK_ROLL_HIGH         = 1.25    # upper bound of normal attack damage roll
+MOONFIRE_DAMAGE          = 7      # damage Moonfire deals to its owner per turn
+POISON_DAMAGE            = 9     # damage poison deals at start of target's turn
 BLINDED_MISS_CHANCE      = 0.5    # probability of missing while Blinded
 
 # Warrior
@@ -204,15 +204,30 @@ CLASS_INTROS = {
 }
 
 TOMBSTONE = [
-    ".-------.",
-    "|       |",
-    "| R.I.P |",
-    "|       |",
-    "|{name:^7}|",
-    "|       |",
-    "__|_______|__",
-    "|             |",
-    "__|___________|__",
+    ".------------.",
+    "|            |",
+    "|   R. I. P  |",
+    "|            |",
+    "|{name:^12}|",
+    "|            |",
+    "__|____________|__",
+    "|                |",
+    "__|______________|__",
+]
+
+TROPHY = [
+    "   .-=========-.",
+    "   ||  VICTOR  ||",
+    "   ||  {name:^7}  ||",
+    "   '-=========-'",
+    "       \\ | /  ",
+    "        \\|/   ",
+    "    .----+----.",
+    "    |  \\   /  |",
+    "    '--.   .--'",
+    "        | |   ",
+    "      .-+-+-.  ",
+    "      |_____|  ",
 ]
 
 # ─────────────────────────────────────────────
@@ -349,10 +364,15 @@ def print_title() -> None:
 def print_victory(player: "Character", boss: "Character", final_boss: bool = True) -> None:
     """Print the victory screen after defeating a boss."""
     print("\n" + "═" * 50)
-    slow_print(f"  🏆  {player.name} has defeated {boss.name}!")
     if final_boss:
-        slow_print("  The darkness recedes. Light returns to the realm. ✨")
+        for line in TROPHY:
+            slow_print("  " + line.format(name=player.name[:12]), delay=0.02)
+            pause(0.05)
+        pause(0.3)
+        slow_print(f"\n  🏆  {player.name} has defeated {boss.name}!", delay=0.05)
+        slow_print("  The darkness recedes. Light returns to the realm. ✨", delay=0.04)
     else:
+        slow_print(f"  🏆  {player.name} has defeated {boss.name}!")
         slow_print("  A new threat stirs... this war is not over yet. ⚔️")
     print("═" * 50)
 
@@ -361,7 +381,7 @@ def print_defeat(player: "Character", boss: "Character") -> None:
     """Print the defeat screen with a tombstone and GAME OVER banner."""
     print("\n" + "═" * 50)
     for line in TOMBSTONE:
-        slow_print("  " + line.format(name=player.name[:7]), delay=0.02)
+        slow_print("  " + line.format(name=player.name[:12]), delay=0.02)
         pause(0.05)
     pause(0.3)
     slow_print("\n  * * * G A M E   O V E R * * *")
