@@ -998,15 +998,7 @@ class HolyPriest(Character):
         )
 
     def start_of_turn(self) -> None:
-        """Trigger resurrection if HP dropped to zero last turn."""
-        if self._resurrection_triggered and self.health <= 0:
-            self._resurrection_used    = True
-            self._resurrection_triggered = False
-            self.health = int(self.max_health * PRIEST_RESURRECTION_HP)
-            slow_print(
-                f"  ✝️  {self.name} rises from the brink of death!"
-                f" HP restored to {self.health}/{self.max_health}!"
-            )
+        """Nothing to tick at start of turn for HolyPriest."""
 
 
 class Rogue(Character):
@@ -1671,6 +1663,17 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> str:
             print(f"{'─' * 50}")
             pause(0.3)
             boss.take_turn(player)
+
+        if player.health <= 0 and hasattr(player, "_resurrection_triggered") \
+                and player._resurrection_triggered:  # noqa: SLF001
+            player._resurrection_used       = True   # noqa: SLF001
+            player._resurrection_triggered  = False  # noqa: SLF001
+            player.health = int(player.max_health * PRIEST_RESURRECTION_HP)
+            slow_print(
+                f"\n  ✝️  {player.name} rises from the brink of death!"
+                f" HP restored to {player.health}/{player.max_health}!",
+                delay=0.05,
+            )
 
         if player.health <= 0:
             break
