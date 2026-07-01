@@ -19,17 +19,10 @@ if os.name == "nt" and sys.flags.utf8_mode != 1 and os.environ.get("WIZARD_UTF8_
     sys.exit(reexec.returncode)
 
 # ─────────────────────────────────────────────
-#  CONFIG  (replaces bare module-level DEBUG flag)
+#  DEBUG FLAG  (set once by main() from --debug arg)
 # ─────────────────────────────────────────────
 
-@dataclass
-
-
-class _Config:
-    debug: bool = False
-
-
-_cfg = _Config()
+DEBUG: bool = False
 
 
 class BattleResult(Enum):
@@ -50,10 +43,10 @@ POISON_DAMAGE            = 9     # damage poison deals at start of target's turn
 BLINDED_MISS_CHANCE      = 0.5   # probability of missing while Blinded
 
 # Print delays (seconds per character in slow_print)
-DELAY_NORMAL             = 0.03
-DELAY_SLOW               = 0.04
-DELAY_DRAMATIC           = 0.05
-DELAY_FAST               = 0.02
+DELAY_NORMAL             = 0.018
+DELAY_SLOW               = 0.025
+DELAY_DRAMATIC           = 0.030
+DELAY_FAST               = 0.012
 
 # Warrior
 WARRIOR_HP               = 170
@@ -186,12 +179,32 @@ WIZARD_TAUNTS = [
     "The darkness will consume you! 🌑",
     "Tremble before my power! 💜",
     "You cannot win... give up now! 😈",
+    "Pathetic mortal. 🖤",
+    "I have destroyed armies. You are nothing. 💀",
+    "Every spell you cast only delays the inevitable! ⚡",
+    "The realm will bow to me... one grave at a time. 🌑",
+]
+
+WIZARD_ENRAGE_TAUNTS = [
+    "You've made me angry. BIG mistake. 😡",
+    "ENOUGH! Feel my true wrath! 🔥",
+    "Now you die in earnest! ⚡",
 ]
 
 DRAGON_TAUNTS = [
     "You enter my lair and expect mercy? 🐲",
     "I have burned kingdoms to ash. 🔥",
     "Feel the heat of the abyss! 🌋",
+    "Your bones will line my nest. 🦴",
+    "I have slept for a thousand years. Your death wakes me gently. 🐉",
+    "Puny creature. I exhale harder than you fight. 💨",
+    "Run. It makes the hunt more interesting. 👁️",
+]
+
+DRAGON_ENRAGE_TAUNTS = [
+    "NOW you have angered me! 🔥",
+    "RAMPAGE! 🐉🔥",
+    "You drew BLOOD?! Unforgivable! 😡",
 ]
 
 TOMBSTONE = [
@@ -248,8 +261,6 @@ STATUS_LABELS = {
 # ─────────────────────────────────────────────
 
 @dataclass
-
-
 class Ability:
     """Represents a single hero ability with metadata and cooldown tracking."""
 
@@ -277,8 +288,6 @@ class Ability:
 # ─────────────────────────────────────────────
 
 @dataclass
-
-
 class ResistanceProfile:
     """Describes how a hero interacts with boss-specific mechanics.
 
@@ -292,8 +301,6 @@ class ResistanceProfile:
 
 
 @dataclass
-
-
 class _DragonScaling:
     """Groups the difficulty-dependent scaling values for AncientDragon."""
 
@@ -320,9 +327,9 @@ def prompt_input(prompt: str = "") -> str:
         sys.exit(0)
 
 
-def slow_print(text: str, delay: float = 0.03) -> None:
+def slow_print(text: str, delay: float = DELAY_NORMAL) -> None:
     """Print text one character at a time for a dramatic effect."""
-    if _cfg.debug:
+    if DEBUG:
         print(text)
         return
     for char in text:
@@ -333,7 +340,7 @@ def slow_print(text: str, delay: float = 0.03) -> None:
 
 def pause(seconds: float = 0.6) -> None:
     """Sleep for the given number of seconds (skipped in debug mode)."""
-    if not _cfg.debug:
+    if not DEBUG:
         time.sleep(seconds)
 # ─────────────────────────────────────────────
 #  DISPLAY HELPERS
@@ -359,10 +366,18 @@ def print_hp_bars(player: "Character", boss: "Character") -> None:
 def print_title() -> None:
     """Print the game title banner."""
     print("\n" + "═" * 50)
-    slow_print("  ⚔️   DEFEAT THE EVIL WIZARD   ⚔️", delay=DELAY_SLOW)
-    slow_print("  Defeat the Evil Wizard before he destroys the realm...", delay=DELAY_NORMAL)
+    slow_print("", delay=DELAY_NORMAL)
+    slow_print("    ██████╗ ███████╗███████╗███████╗ █████╗ ████████╗", delay=0.001)
+    slow_print("    ██╔══██╗██╔════╝██╔════╝██╔════╝██╔══██╗╚══██╔══╝", delay=0.001)
+    slow_print("    ██║  ██║█████╗  █████╗  █████╗  ███████║   ██║   ", delay=0.001)
+    slow_print("    ██║  ██║██╔══╝  ██╔══╝  ██╔══╝  ██╔══██║   ██║   ", delay=0.001)
+    slow_print("    ██████╔╝███████╗██║     ███████╗██║  ██║   ██║   ", delay=0.001)
+    slow_print("    ╚═════╝ ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═╝   ╚═╝   ", delay=0.001)
+    slow_print("", delay=DELAY_NORMAL)
+    slow_print("        ⚔️  THE EVIL WIZARD  ⚔️", delay=DELAY_SLOW)
+    slow_print("   Defeat the Dark Wizard before he destroys the realm.", delay=DELAY_NORMAL)
     print("═" * 50)
-    pause(0.8)
+    pause(0.6)
 
 
 def print_victory(player: "Character", boss: "Character", final_boss: bool = True) -> None:
@@ -421,6 +436,10 @@ class Character:  # pylint: disable=too-many-instance-attributes
         self.abilities:      list[Ability] = []
         self.status_effects: set[str]      = set()
         self._used_once:     set[str]      = set()
+        # Battle stat trackers (reset each fresh instance)
+        self.total_damage_dealt:  int = 0
+        self.total_damage_taken:  int = 0
+        self.total_healed:        int = 0
 
     @property
     def resistance_profile(self) -> ResistanceProfile:
@@ -448,6 +467,8 @@ class Character:  # pylint: disable=too-many-instance-attributes
             int(self.attack_power * ATTACK_ROLL_HIGH),
         )
         opponent.health -= damage
+        self.total_damage_dealt  += damage
+        opponent.total_damage_taken += damage
         slow_print(f"  ⚔️  {self.name} attacks {opponent.name} for {damage} damage!")
         if opponent.health <= 0:
             slow_print(f"  💥 {opponent.name} has been defeated!")
@@ -457,6 +478,7 @@ class Character:  # pylint: disable=too-many-instance-attributes
         before = self.health
         self.health = min(self.health + self.heal_power, self.max_health)
         healed = self.health - before
+        self.total_healed += healed
         slow_print(
             f"  💚 {self.name} heals for {healed} HP!"
             f" ({self.health}/{self.max_health})"
@@ -547,6 +569,7 @@ class Character:  # pylint: disable=too-many-instance-attributes
     def _deal_damage(self, opponent: "Character", damage: int) -> None:
         """Apply a fixed damage value to opponent and report remaining HP."""
         opponent.health -= damage
+        self.total_damage_dealt += damage
         slow_print(
             f"  💥 {opponent.name} takes {damage} damage!"
             f" ({opponent.health}/{opponent.max_health} HP remaining)"
@@ -582,7 +605,6 @@ class Warrior(Character):
             attack_power=WARRIOR_ATK,
             heal_power=WARRIOR_HEAL,
         )
-        self._used_once: set[str] = set()
         self.abilities = [
             Ability(
                 "⚔️  Shield Bash",
@@ -997,7 +1019,6 @@ class HolyPriest(Character):
             attack_power=PRIEST_ATK,
             heal_power=PRIEST_HEAL,
         )
-        self._used_once: set[str]    = set()
         self._resurrection_triggered = False
         self.abilities = [
             Ability(
@@ -1289,6 +1310,7 @@ class Boss(Character):
         if player.try_negate_incoming_attack(self.name):
             return
         player.health -= damage
+        player.total_damage_taken += damage
         slow_print(
             f"  💥 {player.name} takes {damage} damage!"
             f" HP: {player.health}/{player.max_health}"
@@ -1346,7 +1368,11 @@ class EvilWizard(Boss):
             self._enraged      = True
             self.attack_power += WIZARD_ENRAGE_BONUS
             slow_print(
-                f"\n  ⚡ {self.name} becomes ENRAGED!"
+                f"\n  ⚡ {self.name}: \"{random.choice(WIZARD_ENRAGE_TAUNTS)}\"",
+                delay=DELAY_DRAMATIC,
+            )
+            slow_print(
+                f"  ⚡ {self.name} becomes ENRAGED!"
                 f" Attack power → {self.attack_power}!",
                 delay=DELAY_DRAMATIC,
             )
@@ -1354,7 +1380,7 @@ class EvilWizard(Boss):
 
         profile = player.resistance_profile
         if profile.dark_bonus_damage > 0:
-            if not STATUS_DARK_SUPPRESSED in player.status_effects:
+            if STATUS_DARK_SUPPRESSED not in player.status_effects:
                 player.status_effects.add(STATUS_DARK_SUPPRESSED)
                 player.heal_power = player.heal_power // 2
                 slow_print(
@@ -1445,7 +1471,11 @@ class AncientDragon(Boss):
             self._enraged      = True
             self.attack_power += DRAGON_ENRAGE_BONUS
             slow_print(
-                f"\n  🔥 {self.name} enters RAMPAGE!"
+                f"\n  🔥 {self.name}: \"{random.choice(DRAGON_ENRAGE_TAUNTS)}\"",
+                delay=DELAY_DRAMATIC,
+            )
+            slow_print(
+                f"  🔥 {self.name} enters RAMPAGE!"
                 f" Attack power → {self.attack_power}!",
                 delay=DELAY_DRAMATIC,
             )
@@ -1502,18 +1532,16 @@ HERO_REGISTRY: list[tuple[str, str, type[Character]]] = [
     ("Druid",        "Nature shaman",   Druid),
 ]
 
-BOSS_OPTIONS: dict[str, tuple[str, str, type[Boss], str]] = {
+BOSS_OPTIONS: dict[str, tuple[str, str, type[Boss]]] = {
     "1": (
         "The Dark Wizard",
         "Regenerating spellcaster with suppression, enrage, and void burst.",
         EvilWizard,
-        "🧙",
     ),
     "2": (
         "Ashmaw, Ancient Dragon",
         "Relentless bruiser with fury cycles, aura damage, and inferno breath.",
         AncientDragon,
-        "🐉",
     ),
 }
 
@@ -1603,8 +1631,8 @@ def choose_boss(difficulty: str = "normal") -> Boss:
     print("\n" + "═" * 50)
     slow_print("  ☠️   CHOOSE YOUR FOE   ☠️", delay=DELAY_SLOW)
     print("═" * 50)
-    for key, (name, style, _cls, emoji) in BOSS_OPTIONS.items():
-        print(f"  {key}. {name:<24} {emoji}")
+    for key, (name, style, cls) in BOSS_OPTIONS.items():
+        print(f"  {key}. {name:<24} {cls.emoji}")
         print(f"     {style}")
     print("═" * 50)
     while True:
@@ -1612,20 +1640,20 @@ def choose_boss(difficulty: str = "normal") -> Boss:
         if choice in BOSS_OPTIONS:
             break
         print("  ❌ Invalid choice — enter 1 or 2.")
-    name, _style, cls, _emoji = BOSS_OPTIONS[choice]
+    name, _style, cls = BOSS_OPTIONS[choice]
     return cls(name, difficulty=difficulty)
 
 
-def _remaining_boss_option(current_boss: Boss) -> tuple[str, str, type[Boss], str] | None:
+def _remaining_boss_option(current_boss: Boss) -> tuple[str, str, type[Boss]] | None:
     """Return the BOSS_OPTIONS entry for whichever boss was not chosen, or None."""
-    for name, style, cls, emoji in BOSS_OPTIONS.values():
+    for name, style, cls in BOSS_OPTIONS.values():
         if not isinstance(current_boss, cls):
-            return name, style, cls, emoji
+            return name, style, cls
     return None
 
 
 def _between_boss_heal(player: Character) -> None:
-    """Restore 35 % of max HP between gauntlet fights and print a respite message."""
+    """Restore 50 % of max HP between gauntlet fights and print a respite message."""
     heal_amount   = max(1, int(player.max_health * BETWEEN_BOSS_HEAL_RATIO))
     before        = player.health
     player.health = min(player.health + heal_amount, player.max_health)
@@ -1664,7 +1692,7 @@ def _print_run_summary(
     mode:             str,
     difficulty:       str,
     first_boss:       Boss,
-    remaining_option: tuple[str, str, type[Boss], str] | None = None,
+    remaining_option: tuple[str, str, type[Boss]] | None = None,
 ) -> None:
     """Print a summary of the chosen mode, difficulty, and boss order."""
     mode_label       = "Single Boss"  if mode == "single"      else "Gauntlet Challenge"
@@ -1750,6 +1778,21 @@ def _handle_player_turn(player: Character, boss: Boss) -> BattleResult | None:
             print("  ❌ Invalid choice — try again.")
 
 
+def _print_battle_summary(player: Character, turns: int) -> None:
+    """Print a compact post-battle stat breakdown."""
+    print("\n" + "─" * 50)
+    slow_print("  📊  BATTLE SUMMARY", delay=DELAY_NORMAL)
+    print("─" * 50)
+    print(f"  Turns fought   : {turns}")
+    print(f"  Damage dealt   : {player.total_damage_dealt}")
+    print(f"  Damage taken   : {player.total_damage_taken}")
+    print(f"  HP healed      : {player.total_healed}")
+    if player.total_damage_taken > 0:
+        ratio = round(player.total_damage_dealt / player.total_damage_taken, 2)
+        print(f"  Dmg ratio      : {ratio}x")
+    print("─" * 50)
+
+
 def battle(player: Character, boss: Boss, final_boss: bool = True) -> BattleResult:
     """Run a single combat loop; return 'win', 'loss', or 'restart'."""
     pause(0.5)
@@ -1763,9 +1806,16 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> BattleResu
     while boss.health > 0 and player.health > 0:
         turn += 1
         print(f"\n{'═' * 50}")
-        slow_print(f"  ⚔️   TURN {turn}   ⚔️", delay=DELAY_NORMAL)
+        pct   = int(100 * max(player.health, 0) / player.max_health)
+        state = "💀 CRITICAL" if pct < 20 else ("⚠️  LOW" if pct < 40 else "✅ OK")
+        slow_print(f"  ⚔️   TURN {turn}  │  {player.name}: {state}   ⚔️", delay=DELAY_NORMAL)
         print(f"{'═' * 50}")
         print_hp_bars(player, boss)
+        if player.health <= int(player.max_health * 0.25):
+            slow_print(
+                "  ⚠️  WARNING: You are critically low on HP! Consider healing!",
+                delay=DELAY_FAST,
+            )
         player.start_of_turn()
         if player.health <= 0:
             break
@@ -1792,6 +1842,7 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> BattleResu
             break
 
     pause(0.8)
+    _print_battle_summary(player, turn)
     print(f"\n{'═' * 50}")
     if boss.health <= 0:
         print_victory(player, boss, final_boss=final_boss)
@@ -1802,51 +1853,57 @@ def battle(player: Character, boss: Boss, final_boss: bool = True) -> BattleResu
     return BattleResult.LOSS
 
 
-def _battle_with_restart(player: Character, boss: Boss, final_boss: bool = True) -> BattleResult:
-    """Run battle; on restart both player and boss reset, otherwise player carries over."""
-    result        = BattleResult.RESTART
-    first_attempt = True
-    while result == BattleResult.RESTART:
-        combatant = player if first_attempt else player.reset()
-        result    = battle(combatant, boss.reset(), final_boss=final_boss)
-        first_attempt = False
-    return result
+def _battle_with_restart(
+    player: Character, boss: Boss, final_boss: bool = True
+) -> tuple[BattleResult, Character]:
+    """Run battle, resetting on player-requested restart; return (result, survivor)."""
+    combatant = player
+    while True:
+        result = battle(combatant, boss.reset(), final_boss=final_boss)
+        if result != BattleResult.RESTART:
+            return result, combatant
+        combatant = player.reset()
 
 
-def _run_once(difficulty: str, mode: str, player: Character, first_boss: Boss) -> None:
-    """Execute one full run (single or gauntlet) for the given settings."""
-    remaining = _remaining_boss_option(first_boss) if mode == "gauntlet" else None
-    _print_run_summary(mode, difficulty, first_boss, remaining_option=remaining)
+def _run_gauntlet(difficulty: str, player: Character, first_boss: Boss) -> None:
+    """Run the gauntlet: two sequential bosses with a respite heal between them."""
+    remaining = _remaining_boss_option(first_boss)
+    _print_run_summary("gauntlet", difficulty, first_boss, remaining_option=remaining)
 
     if not _confirm_or_restart():
         slow_print("\n  🔄 Starting over...\n", delay=DELAY_NORMAL)
         return
 
-    if mode == "single":
+    # If somehow no second boss exists, treat it as a single fight
+    if remaining is None:
         _battle_with_restart(player.reset(), first_boss, final_boss=True)
         return
 
-    is_only_boss  = remaining is None
-    first_player  = player.reset()
-    result        = BattleResult.RESTART
-    first_attempt = True
-    while result == BattleResult.RESTART:
-        first_player  = player.reset() if not first_attempt else first_player
-        result        = battle(first_player, first_boss.reset(), final_boss=is_only_boss)
-        first_attempt = False
-
-    if result != BattleResult.WIN or is_only_boss:
+    result, survivor = _battle_with_restart(player.reset(), first_boss, final_boss=False)
+    if result != BattleResult.WIN:
         return
 
-    # Gauntlet: carry the surviving player into the second fight, then apply respite
-    _between_boss_heal(first_player)
-    next_name, _style, next_cls, _emoji = remaining
+    _between_boss_heal(survivor)
+    next_name, _style, next_cls = remaining  # remaining is guaranteed non-None here
     slow_print(
         f"\n  ⚠️  The gauntlet continues... {next_name} descends upon you!",
         delay=DELAY_SLOW,
     )
     second_boss = next_cls(next_name, difficulty=difficulty)
-    _battle_with_restart(first_player, second_boss, final_boss=True)
+    _battle_with_restart(survivor, second_boss, final_boss=True)
+
+
+def _run_once(difficulty: str, mode: str, player: Character, first_boss: Boss) -> None:
+    """Route a run to the appropriate mode handler."""
+    if mode == "gauntlet":
+        _run_gauntlet(difficulty, player, first_boss)
+        return
+
+    _print_run_summary(mode, difficulty, first_boss)
+    if not _confirm_or_restart():
+        slow_print("\n  🔄 Starting over...\n", delay=DELAY_NORMAL)
+        return
+    _battle_with_restart(player.reset(), first_boss, final_boss=True)
 
 
 def main() -> None:
@@ -1857,7 +1914,8 @@ def main() -> None:
         action="store_true",
         help="Skip all delays and slow-print effects for fast testing.",
     )
-    _cfg.debug = parser.parse_args().debug  # mutate the config object; no global needed
+    global DEBUG  # pylint: disable=global-statement
+    DEBUG = parser.parse_args().debug
 
     print_title()
     pause(0.5)
